@@ -8,6 +8,7 @@ venv/
 
 # Astronomy test data
 M101/
+NGC5906/
 
 # IDE
 .vscode/
