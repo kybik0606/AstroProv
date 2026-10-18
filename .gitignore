@@ -1,0 +1,18 @@
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Virtual environments
+venv/
+.venv/
+
+# Astronomy test data
+M101/
+
+# IDE
+.vscode/
+
+# Secrets and private keys
+.env
+*.pem
+*.key
