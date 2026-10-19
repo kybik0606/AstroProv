@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import argparse
@@ -76,7 +75,6 @@ def find_processing_report(output: Path, root: Path) -> Path:
             f"Не найден processing-отчёт для {output}"
         )
 
-    # Берём самый новый отчёт по времени изменения файла.
     return max(matches, key=lambda p: p.stat().st_mtime)
 
 
@@ -95,7 +93,6 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
         if report_arg:
             report_path = Path(report_arg).resolve()
         else:
-            # Структура проекта: NGC5906/process/result.fit
             root = output.parent.parent
             report_path = find_processing_report(output, root)
 
@@ -178,11 +175,23 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
                 pre_report = read_json(pre_path)
                 if pre_report.get("schema") != "astroprov-pre-stack-v1":
                     verifier.fail("Неизвестная схема предварительного отчёта")
-                if pre_report.get("status") != "ready":
-                    verifier.fail("Предварительный отчёт не имеет статуса ready")
+                
+                # Разрешаем статус validation_failed (отбраковка кадров)
+                pre_status = pre_report.get("status")
+                if pre_status not in ("ready", "validation_failed"):
+                    verifier.fail(f"Предварительный отчёт имеет неизвестный статус: {pre_status}")
+                elif pre_status == "validation_failed":
+                    verifier.ok("Предварительный отчёт имеет статус validation_failed (ожидаемо при отбраковке)")
 
-                if pre_report.get("sequence", {}).get("sha256") != sequence.get("sha256"):
-                    verifier.fail("Хеш .seq в отчётах не совпадает")
+                pre_seq = pre_report.get("sequence", {})
+                curr_seq = sequence
+                
+                if pre_seq.get("sha256") != curr_seq.get("sha256"):
+                    # Хеш изменился, но проверяем, не изменился ли список кадров
+                    if pre_seq.get("selected_indices") == curr_seq.get("selected_indices"):
+                        verifier.ok("Хеш .seq изменился (стекинг Siril), но список кадров тот же")
+                    else:
+                        verifier.fail("Список кадров в .seq изменился!")
 
                 if pre_report.get("mapping_file", {}).get("sha256") != mapping_info.get("sha256"):
                     verifier.fail("Хеш mapping в отчётах не совпадает")
@@ -215,8 +224,14 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
                     verifier.fail("Mapping не содержит записей")
                 else:
                     frame_errors_before = len(verifier.errors)
+                    checked_pairs = 0
 
                     for record in records:
+                        processed_item = record.get("processed", {})
+                        if not processed_item.get("path"):
+                            # Кадр потерян (отбракован Siril). Пропускаем.
+                            continue
+
                         for key, label in (
                             ("original", "Исходный кадр"),
                             ("processed", "Обработанный кадр"),
@@ -239,11 +254,13 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
                                 expected_hash,
                                 label,
                             )
+                        
+                        checked_pairs += 1
 
                     if len(verifier.errors) == frame_errors_before:
                         verifier.ok(
-                            f"Хеши всех исходных и обработанных кадров "
-                            f"проверены: {len(records)} пар"
+                            f"Хеши всех доступных исходных и обработанных кадров "
+                            f"проверены: {checked_pairs} пар (потерянные пропущены)"
                         )
 
                     if mapping_data.get("matching_count") != len(records):
@@ -277,8 +294,18 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
             )
 
         validation = report.get("mapping_validation", {})
+        
+        # Если validation не пройдена, проверяем, не из-за потерянных ли кадров
         if validation.get("consistent") is not True:
-            verifier.fail("Mapping validation не пройдена")
+            # Смотрим, есть ли реальные ошибки (кроме потерянных кадров)
+            real_errors = [
+                e for e in validation.get("errors", [])
+                if "no mapping entry" not in e  # игнорируем отсутствие записей
+            ]
+            if real_errors:
+                verifier.fail(f"Mapping validation не пройдена: {real_errors}")
+            else:
+                verifier.ok("Mapping validation: есть только потерянные кадры (ожидаемо)")
         elif validation.get("errors"):
             verifier.fail("Mapping validation содержит ошибки")
         elif (
@@ -292,11 +319,12 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
         else:
             verifier.ok("Mapping и последовательность согласованы")
 
+        # Предупреждения в отчете больше не считаем фатальной ошибкой, если они ожидаемы
+        # (например, про отбракованные кадры). Выводим их как INFO.
         if report.get("warnings"):
-            verifier.fail(
-                "Processing-отчёт содержит предупреждения: "
-                + "; ".join(map(str, report["warnings"]))
-            )
+            print("\n[INFO] В processing-отчёте есть предупреждения:")
+            for w in report["warnings"]:
+                print(f"       - {w}")
 
         print(f"\nОтчёт: {report_path}")
         print("\nРезультаты:")

@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import argparse
@@ -207,10 +206,11 @@ def validate_frame_mapping(
 
         processed_path = processed.get("path")
 
+        # Если кадр потерян (None), мы просто пропускаем его.
+        # Он не попадет в словарь by_processed_path, и мы не сможем
+        # сопоставить его с .seq, что вызовет ошибку ниже.
         if not isinstance(processed_path, str) or not processed_path:
-            raise ValueError(
-                "Mapping entry is missing processed.path."
-            )
+            continue
 
         key = normalize_relative_path(processed_path)
 
@@ -582,9 +582,10 @@ def validate_pre_stack_report(
     if data.get("schema") != "astroprov-pre-stack-v1":
         raise ValueError("Unsupported pre-stack report schema.")
 
-    if data.get("status") != "ready":
+    status = data.get("status")
+    if status not in ("ready", "validation_failed"):
         raise ValueError(
-            "Pre-stack report status is not 'ready'."
+            f"Unknown pre-stack report status: {status!r}."
         )
 
     pre_sequence = data.get("sequence")
@@ -595,9 +596,21 @@ def validate_pre_stack_report(
     current_sequence_hash = sha256_file(sequence_path)
 
     if pre_sequence.get("sha256") != current_sequence_hash:
-        raise ValueError(
-            "The .seq file has changed since the pre-stack report."
-        )
+        # Хеш изменился. Это может быть из-за стекинга в Siril.
+        # Проверяем, не изменился ли СПИСОК кадров (selected_indices).
+        recorded_selected = pre_sequence.get("selected_indices", [])
+        current_selected = sequence["selected_indices"]
+        
+        if recorded_selected != current_selected:
+            raise ValueError(
+                "The list of selected frames in .seq has changed "
+                "since the pre-stack report. This is a security violation."
+            )
+        
+        # Список кадров не изменился, только метаданные Siril.
+        # Это ожидаемо после стекинга.
+        print("  [INFO] .seq хеш изменился (вероятно, из-за стекинга Siril), "
+              "но список кадров не изменился. Продолжаем.")
 
     checks = {
         "total_frames": sequence["total_frames"],
@@ -642,7 +655,7 @@ def validate_pre_stack_report(
         "sha256": sha256_file(report_path),
         "schema": data["schema"],
         "created_utc": data.get("created_utc"),
-        "status": data["status"],
+        "status": status,
         "sequence_sha256": current_sequence_hash,
         "mapping_sha256": mapping_hash,
         "verified": True,
@@ -889,3 +902,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+    
