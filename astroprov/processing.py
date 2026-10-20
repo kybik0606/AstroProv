@@ -676,21 +676,24 @@ def build_report(
     warnings = []
 
     if not sequence_path.is_file():
-        raise FileNotFoundError(
-            f"Sequence file not found: {sequence_path}"
-        )
-
+        raise FileNotFoundError(f"Sequence file not found: {sequence_path}")
     if not output_path.is_file():
-        raise FileNotFoundError(
-            f"Output FITS not found: {output_path}"
-        )
+        raise FileNotFoundError(f"Output FITS not found: {output_path}")
 
     sequence = parse_sequence(sequence_path)
     fits_info = inspect_output_fits(output_path)
 
+    # Получаем passport_id из манифеста
+    passport_id = None
+    if manifest_path and manifest_path.is_file():
+        try:
+            manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+            passport_id = manifest_data.get("passport_id")
+        except Exception:
+            pass
+
     recorded_count = fits_info["stack_count"]
     count_source = "STACKCNT"
-
     if recorded_count is None:
         recorded_count = fits_info["combine_count"]
         count_source = "NCOMBINE"
@@ -698,41 +701,21 @@ def build_report(
     if recorded_count is not None:
         try:
             recorded_count = int(recorded_count)
-
             if recorded_count != sequence["selected_count"]:
-                warnings.append(
-                    f"FITS {count_source}={recorded_count}, but "
-                    f".seq has {sequence['selected_count']} selected frames."
-                )
+                warnings.append(f"FITS {count_source}={recorded_count}, but .seq has {sequence['selected_count']} selected frames.")
         except (TypeError, ValueError):
-            warnings.append(
-                f"Could not interpret FITS {count_source} as an integer."
-            )
+            warnings.append(f"Could not interpret FITS {count_source} as an integer.")
     else:
         count_source = None
-        warnings.append(
-            "Output FITS has neither STACKCNT nor NCOMBINE; "
-            "the stacked frame count could not be cross-checked."
-        )
+        warnings.append("Output FITS has neither STACKCNT nor NCOMBINE; the stacked frame count could not be cross-checked.")
 
     mapping_validation = None
-
     if mapping_path is not None:
-        mapping_validation = validate_frame_mapping(
-            mapping_path=mapping_path,
-            sequence_path=sequence_path,
-            sequence=sequence,
-        )
-
+        mapping_validation = validate_frame_mapping(mapping_path=mapping_path, sequence_path=sequence_path, sequence=sequence)
         if not mapping_validation["consistent"]:
-            warnings.append(
-                "Frame mapping validation found missing entries, "
-                "hash mismatches, or other inconsistencies."
-            )
+            warnings.append("Frame mapping validation found missing entries, hash mismatches, or other inconsistencies.")
 
-    # Verify the pre-stack report before linking it.
     pre_stack_link = None
-
     if pre_stack_report_path is not None:
         pre_stack_link = validate_pre_stack_report(
             report_path=pre_stack_report_path,
@@ -745,6 +728,7 @@ def build_report(
         "schema": "astroprov-processing-v2",
         "stage": "post-stack",
         "created_utc": utc_timestamp(),
+        "passport_id": passport_id,  # <--- ДОБАВЛЕНО СЮДА
         "sequence": {
             "path": str(sequence_path),
             "sha256": sha256_file(sequence_path),
@@ -766,11 +750,7 @@ def build_report(
             "selected_count": sequence["selected_count"],
             "fits_count_field": count_source,
             "fits_recorded_count": recorded_count,
-            "consistent": (
-                recorded_count == sequence["selected_count"]
-                if recorded_count is not None
-                else None
-            ),
+            "consistent": (recorded_count == sequence["selected_count"] if recorded_count is not None else None),
         },
         "mapping_file": optional_file_record(mapping_path),
         "mapping_validation": mapping_validation,
@@ -779,12 +759,9 @@ def build_report(
         "stack_command": stack_command,
         "warnings": warnings,
         "limitations": [
-            "A .seq file records selection state but does not independently "
-            "prove which files Siril actually processed.",
-            "Mapping hash checks compare current files against hashes "
-            "recorded in the mapping JSON.",
-            "The pre-stack report link verifies matching input hashes "
-            "and frame selection, but does not prove Siril execution.",
+            "A .seq file records selection state but does not independently prove which files Siril actually processed.",
+            "Mapping hash checks compare current files against hashes recorded in the mapping JSON.",
+            "The pre-stack report link verifies matching input hashes and frame selection, but does not prove Siril execution.",
             "This report is not digitally signed.",
         ],
     }

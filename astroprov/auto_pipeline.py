@@ -4,9 +4,10 @@ import argparse
 import subprocess
 import sys
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
-from astroprov import mapping, processing, snapshot, verify
+from astroprov import mapping, processing, snapshot, verify, fits_prov
 
 
 def clean_process_dir(object_dir: Path) -> None:
@@ -62,6 +63,12 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
     print("[2/6] Сканирование исходных данных (snapshot)...")
     manifest_path = snapshot.create_manifest(object_dir)
     print(f"  Манифест создан: {manifest_path.name}\n")
+    
+    # Читаем манифест, чтобы взять оттуда ID и Merkle root для паспорта
+    import json
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    passport_id = manifest_data["passport_id"]
+    merkle_root = manifest_data["categories"]["lights"]["merkle_root"]
 
     # --- ШАГ 3: Mapping ---
     print("[3/6] Создание маппинга (mapping)...")
@@ -126,9 +133,7 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
     stack_script_path = process_dir / "_stack_temp.ssf"
     output_fits_name = f"{seq_name}_stacked"
     
-    # Убрали seqapplyreg, так как register уже был в скрипте калибровки
     stack_cmd = f"stack {seq_name} rej 3 3 -nonorm -filter-included -out={output_fits_name}"
-    
     print(f"[*] Параметры стекинга: {stack_cmd}")
 
     stack_script_content = f"""requires 1.2.0
@@ -156,9 +161,22 @@ cd ..
     output_fits = max(stack_files, key=lambda p: p.stat().st_mtime)
     print(f"  Найден итоговый FITS: {output_fits.name}\n")
 
-    # --- ШАГ 7: Post-stack ---
-    print("[7/7] Создание финального отчета (post-stack)...")
+    # --- ШАГ 7: Вшивание паспорта и создание финального отчета ---
+    print("[7/7] Вшивание паспорта (fits_prov) и создание post-stack отчета...")
     try:
+        # Формируем данные для паспорта
+        prov_data = {
+            "version": "1.0",
+            "id": passport_id,
+            "merkle_root": merkle_root,
+            "date": datetime.now(timezone.utc).isoformat(),
+            "tool": "AstroProv"
+        }
+        
+        # Вшиваем паспорт в FITS (это изменит хеш файла)
+        fits_prov.write_provenance(output_fits, prov_data)
+        
+        # Теперь создаем отчет (он посчитает хеш УЖЕ с паспортом)
         proc_report = processing.build_report(
             sequence_path=seq_path,
             output_path=output_fits,

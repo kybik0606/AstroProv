@@ -5,6 +5,7 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+from astropy.io import fits
 
 
 def sha256_file(path: Path) -> str:
@@ -55,12 +56,9 @@ class Verification:
 def find_processing_report(output: Path, root: Path) -> Path:
     reports_dir = root / ".astroprov" / "runs"
     if not reports_dir.is_dir():
-        raise FileNotFoundError(
-            f"Папка отчётов не найдена: {reports_dir}"
-        )
+        raise FileNotFoundError(f"Папка отчётов не найдена: {reports_dir}")
 
     matches = []
-
     for candidate in reports_dir.glob("processing-*.json"):
         try:
             report = read_json(candidate)
@@ -71,9 +69,7 @@ def find_processing_report(output: Path, root: Path) -> Path:
             continue
 
     if not matches:
-        raise FileNotFoundError(
-            f"Не найден processing-отчёт для {output}"
-        )
+        raise FileNotFoundError(f"Не найден processing-отчёт для {output}")
 
     return max(matches, key=lambda p: p.stat().st_mtime)
 
@@ -98,12 +94,33 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
 
         report = read_json(report_path)
 
+        # --- НОВАЯ ПРОВЕРКА: HDU PROVENANCE В ФАЙЛЕ ---
+        fits_prov_id = None
+        try:
+            with fits.open(output, mode="readonly") as hdul:
+                if "PROVENANCE" not in hdul:
+                    verifier.fail("В FITS отсутствует HDU с паспортом (PROVENANCE)!")
+                else:
+                    fits_prov_id = hdul["PROVENANCE"].header.get("PROVID")
+                    verifier.ok(f"Паспорт в FITS найден. ID: {fits_prov_id}")
+        except Exception as e:
+            verifier.fail(f"Ошибка чтения FITS-паспорта: {e}")
+
         if report.get("schema") != "astroprov-processing-v2":
             verifier.fail("Неизвестная схема processing-отчёта")
         elif report.get("stage") != "post-stack":
             verifier.fail("Отчёт не относится к этапу post-stack")
         else:
             verifier.ok("Тип и этап processing-отчёта проверены")
+            
+            # Сверяем ID паспорта
+            report_prov_id = report.get("passport_id")
+            if not report_prov_id:
+                verifier.fail("В JSON-отчете отсутствует passport_id для сверки.")
+            elif fits_prov_id != report_prov_id:
+                verifier.fail(f"ID паспорта не совпадает! FITS: {fits_prov_id}, JSON: {report_prov_id}")
+            else:
+                verifier.ok("ID паспорта в FITS совпадает с ID в JSON-отчете")
 
         recorded_output = report.get("output_fits", {})
         report_output_path = recorded_output.get("path")
@@ -114,9 +131,7 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
             verifier.fail("Отчёт относится к другому итоговому FITS")
 
         if recorded_output.get("sha256"):
-            verifier.check_hash(
-                output, recorded_output["sha256"], "Итоговый FITS"
-            )
+            verifier.check_hash(output, recorded_output["sha256"], "Итоговый FITS")
         else:
             verifier.fail("В отчёте отсутствует SHA-256 итогового FITS")
 
@@ -126,11 +141,7 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
             sequence_path = output.parent.parent / sequence_path
 
         if sequence.get("sha256"):
-            verifier.check_hash(
-                sequence_path,
-                sequence["sha256"],
-                "Последовательность .seq",
-            )
+            verifier.check_hash(sequence_path, sequence["sha256"], "Последовательность .seq")
         else:
             verifier.fail("В отчёте отсутствует SHA-256 .seq")
 
@@ -145,12 +156,7 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
             if not mapping_path.is_absolute():
                 mapping_path = output.parent.parent / mapping_path
             mapping_path = mapping_path.resolve()
-
-            verifier.check_hash(
-                mapping_path,
-                mapping_info.get("sha256", ""),
-                "Mapping",
-            )
+            verifier.check_hash(mapping_path, mapping_info.get("sha256", ""), "Mapping")
 
         pre_info = report.get("pre_stack_report", {})
         pre_path_value = pre_info.get("path")
@@ -164,19 +170,13 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
             if not pre_path.is_absolute():
                 pre_path = output.parent.parent / pre_path
             pre_path = pre_path.resolve()
-
-            verifier.check_hash(
-                pre_path,
-                pre_info.get("sha256", ""),
-                "Предварительный отчёт",
-            )
+            verifier.check_hash(pre_path, pre_info.get("sha256", ""), "Предварительный отчёт")
 
             try:
                 pre_report = read_json(pre_path)
                 if pre_report.get("schema") != "astroprov-pre-stack-v1":
                     verifier.fail("Неизвестная схема предварительного отчёта")
                 
-                # Разрешаем статус validation_failed (отбраковка кадров)
                 pre_status = pre_report.get("status")
                 if pre_status not in ("ready", "validation_failed"):
                     verifier.fail(f"Предварительный отчёт имеет неизвестный статус: {pre_status}")
@@ -187,7 +187,6 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
                 curr_seq = sequence
                 
                 if pre_seq.get("sha256") != curr_seq.get("sha256"):
-                    # Хеш изменился, но проверяем, не изменился ли список кадров
                     if pre_seq.get("selected_indices") == curr_seq.get("selected_indices"):
                         verifier.ok("Хеш .seq изменился (стекинг Siril), но список кадров тот же")
                     else:
@@ -205,7 +204,6 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
                 verifier.fail(f"Не удалось прочитать предварительный отчёт: {exc}")
                 pre_report = None
 
-        # Проверяем фактические исходные и обработанные кадры.
         mapping_data = None
         if mapping_path is not None and mapping_path.is_file():
             try:
@@ -229,7 +227,6 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
                     for record in records:
                         processed_item = record.get("processed", {})
                         if not processed_item.get("path"):
-                            # Кадр потерян (отбракован Siril). Пропускаем.
                             continue
 
                         for key, label in (
@@ -241,34 +238,20 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
                             expected_hash = item.get("sha256")
 
                             if not relative_path or not expected_hash:
-                                verifier.fail(
-                                    f"В mapping отсутствуют путь или SHA-256: {key}"
-                                )
+                                verifier.fail(f"В mapping отсутствуют путь или SHA-256: {key}")
                                 continue
 
-                            frame_path = resolve_recorded_path(
-                                relative_path, mapping_root
-                            )
-                            verifier.check_hash(
-                                frame_path,
-                                expected_hash,
-                                label,
-                            )
+                            frame_path = resolve_recorded_path(relative_path, mapping_root)
+                            verifier.check_hash(frame_path, expected_hash, label)
                         
                         checked_pairs += 1
 
                     if len(verifier.errors) == frame_errors_before:
-                        verifier.ok(
-                            f"Хеши всех доступных исходных и обработанных кадров "
-                            f"проверены: {checked_pairs} пар (потерянные пропущены)"
-                        )
+                        verifier.ok(f"Хеши всех доступных исходных и обработанных кадров проверены: {checked_pairs} пар (потерянные пропущены)")
 
                     if mapping_data.get("matching_count") != len(records):
-                        verifier.fail(
-                            "matching_count не совпадает с числом записей mapping"
-                        )
+                        verifier.fail("matching_count не совпадает с числом записей mapping")
 
-        # Проверяем числа кадров и согласованность отчётов.
         cross = report.get("cross_check", {})
         selected_count = sequence.get("selected_count")
         excluded_count = sequence.get("excluded_count")
@@ -277,10 +260,7 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
         if selected_count + excluded_count != total_count:
             verifier.fail("Числа выбранных и исключённых кадров не сходятся")
         else:
-            verifier.ok(
-                f"Отбор кадров согласован: {selected_count} выбрано, "
-                f"{excluded_count} исключено"
-            )
+            verifier.ok(f"Отбор кадров согласован: {selected_count} выбрано, {excluded_count} исключено")
 
         if cross.get("consistent") is not True:
             verifier.fail("Проверка числа кадров в FITS не пройдена")
@@ -289,19 +269,12 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
         elif cross.get("fits_recorded_count") != selected_count:
             verifier.fail("Число кадров в FITS не совпадает с отбором")
         else:
-            verifier.ok(
-                f"Число кадров в FITS согласовано: {selected_count}"
-            )
+            verifier.ok(f"Число кадров в FITS согласовано: {selected_count}")
 
         validation = report.get("mapping_validation", {})
         
-        # Если validation не пройдена, проверяем, не из-за потерянных ли кадров
         if validation.get("consistent") is not True:
-            # Смотрим, есть ли реальные ошибки (кроме потерянных кадров)
-            real_errors = [
-                e for e in validation.get("errors", [])
-                if "no mapping entry" not in e  # игнорируем отсутствие записей
-            ]
+            real_errors = [e for e in validation.get("errors", []) if "no mapping entry" not in e]
             if real_errors:
                 verifier.fail(f"Mapping validation не пройдена: {real_errors}")
             else:
@@ -319,8 +292,6 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
         else:
             verifier.ok("Mapping и последовательность согласованы")
 
-        # Предупреждения в отчете больше не считаем фатальной ошибкой, если они ожидаемы
-        # (например, про отбракованные кадры). Выводим их как INFO.
         if report.get("warnings"):
             print("\n[INFO] В processing-отчёте есть предупреждения:")
             for w in report["warnings"]:
@@ -339,14 +310,8 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
             print("\nВЕРДИКТ: FAIL — цепочка не прошла все проверки.")
             return 1
 
-        print(
-            "\nВЕРДИКТ: PASS — файлы и отчёты согласуются "
-            "с зафиксированной цепочкой AstroProv."
-        )
-        print(
-            "Это подтверждает целостность и согласованность артефактов, "
-            "но не является независимым доказательством выполнения Siril."
-        )
+        print("\nВЕРДИКТ: PASS — файлы и отчёты согласуются с зафиксированной цепочкой AstroProv.")
+        print("Это подтверждает целостность и согласованность артефактов, но не является независимым доказательством выполнения Siril.")
         return 0
 
     except (OSError, ValueError, TypeError, KeyError) as exc:
@@ -355,17 +320,9 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Verify an AstroProv FITS provenance chain."
-    )
-    parser.add_argument(
-        "output_fits",
-        help="Path to the stacked output FITS",
-    )
-    parser.add_argument(
-        "--report",
-        help="Explicit processing report path; otherwise auto-detected",
-    )
+    parser = argparse.ArgumentParser(description="Verify an AstroProv FITS provenance chain.")
+    parser.add_argument("output_fits", help="Path to the stacked output FITS")
+    parser.add_argument("--report", help="Explicit processing report path; otherwise auto-detected")
     args = parser.parse_args()
     return verify_output(args.output_fits, args.report)
 

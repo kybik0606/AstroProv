@@ -4,9 +4,10 @@ import argparse
 import subprocess
 import sys
 import shutil
+from datetime import datetime, timezone
 from pathlib import Path
 
-from astroprov import mapping, processing, snapshot, verify
+from astroprov import mapping, processing, snapshot, verify, fits_prov
 
 
 def clean_process_dir(object_dir: Path) -> None:
@@ -60,6 +61,11 @@ def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: 
     print("[2/6] Сканирование исходных данных (snapshot)...")
     manifest_path = snapshot.create_manifest(object_dir)
     print(f"  Манифест создан: {manifest_path.name}\n")
+    
+    import json
+    manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    passport_id = manifest_data["passport_id"]
+    merkle_root = manifest_data["categories"]["lights"]["merkle_root"]
 
     # --- ШАГ 3: Mapping ---
     print("[3/6] Создание маппинга (mapping)...")
@@ -104,7 +110,6 @@ def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: 
     stack_script_path = process_dir / "_stack_full_auto.ssf"
     output_fits_name = f"{seq_name}_stacked"
     
-    # Флаг -filter-included складывает все кадры, которые не были исключены
     stack_cmd = f"stack {seq_name} rej 3 3 -nonorm -filter-included -out={output_fits_name}"
     print(f"[*] Параметры стекинга: {stack_cmd}")
 
@@ -121,8 +126,8 @@ cd ..
     if stack_script_path.exists():
         stack_script_path.unlink()
 
-    # --- ШАГ 6: Поиск итогового FITS и Post-stack ---
-    print("[6/6] Создание финального отчета (post-stack)...")
+    # --- ШАГ 6: Поиск FITS, вшивание паспорта и Post-stack ---
+    print("[6/6] Вшивание паспорта (fits_prov) и создание post-stack отчета...")
     fits_files = list(process_dir.glob("*.fit"))
     stack_files = [f for f in fits_files if "stacked" in f.stem.lower() or "result" in f.stem.lower()]
     
@@ -134,6 +139,17 @@ cd ..
     print(f"  Найден итоговый FITS: {output_fits.name}")
 
     try:
+        # Вшиваем паспорт
+        prov_data = {
+            "version": "1.0",
+            "id": passport_id,
+            "merkle_root": merkle_root,
+            "date": datetime.now(timezone.utc).isoformat(),
+            "tool": "AstroProv"
+        }
+        fits_prov.write_provenance(output_fits, prov_data)
+        
+        # Создаем отчет (с новым хешем файла)
         proc_report = processing.build_report(
             sequence_path=seq_path,
             output_path=output_fits,
