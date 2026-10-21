@@ -9,6 +9,7 @@ venv/
 # Astronomy test data
 M101/
 NGC5906/
+SN 2026sqf/
 
 # IDE
 .vscode/

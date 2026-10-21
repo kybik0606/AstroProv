@@ -1,0 +1,36 @@
+############################################
+# Script for Siril 1.0
+# August 2020
+# (C) Cyril Richard / Colmic
+# Mono_Preprocessing_WithoutDBF v1.1
+#
+########### PREPROCESSING SCRIPT ###########
+# Script for mono camera preprocessing
+# needs 1 set of RAW images in the working
+# directory, within 1 directory:
+# lights 
+#
+############################################
+#
+# MODIFIED BY: Aliaksei Chernik
+# DATE: October 2026
+# CHANGES: 
+#   - Removed the final "stack" command.
+#   - This script now performs calibration and registration 
+#     only. Stacking is handled separately by the AstroProv 
+#     Python pipeline after manual frame selection.
+#
+# This modified version is distributed under the 
+# same license: GPL-3.0-or-later
+#
+############################################
+
+requires 1.2.0
+
+#calibrate lights
+cd lights
+convert light -out=../process
+cd ../process
+
+#align lights
+register light

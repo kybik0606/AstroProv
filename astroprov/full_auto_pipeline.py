@@ -26,6 +26,39 @@ def clean_process_dir(object_dir: Path) -> None:
         print("    Папка process очищена.\n")
 
 
+def analyze_script_calibration(script_path: Path) -> dict:
+    """
+    Читает .ssf скрипт и определяет, какие калибровочные кадры используются.
+    Это нужно, чтобы не записывать в паспорт лишние данные.
+    """
+    text = script_path.read_text(encoding="utf-8", errors="replace")
+    
+    uses_darks = False
+    uses_biases = False
+    uses_flats = False
+    
+    for line in text.splitlines():
+        line = line.strip()
+        # Пропускаем пустые строки и комментарии
+        if line.startswith("#") or not line:
+            continue
+            
+        # Ищем команду калибровки
+        if line.startswith("calibrate"):
+            if "-dark=" in line:
+                uses_darks = True
+            if "-bias=" in line:
+                uses_biases = True
+            if "-flat=" in line:
+                uses_flats = True
+                
+    return {
+        "uses_darks": uses_darks,
+        "uses_biases": uses_biases,
+        "uses_flats": uses_flats,
+    }
+
+
 def run_siril_cli(siril_exe: Path, script_path: Path, work_dir: Path, action_name: str) -> None:
     """Запускает Siril CLI с указанным скриптом."""
     print(f"[*] Запуск Siril CLI: {action_name}")
@@ -55,6 +88,13 @@ def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: 
     print(f"ПОЛНЫЙ АВТОПИЛОТ ASTROPROV: {object_dir.name}")
     print(f"{'='*60}\n")
 
+    # Анализируем скрипт ДО начала работы
+    print("[*] Анализ скрипта Siril...")
+    script_calib = analyze_script_calibration(siril_script)
+    print(f"    Дарки в скрипте: {'Да' if script_calib['uses_darks'] else 'Нет'}")
+    print(f"    Биасы в скрипте: {'Да' if script_calib['uses_biases'] else 'Нет'}")
+    print(f"    Флэты в скрипте: {'Да' if script_calib['uses_flats'] else 'Нет'}\n")
+
     clean_process_dir(object_dir)
     run_siril_cli(siril_cli_exe, siril_script, object_dir, "Калибровка и выравнивание")
     print("  Калибровка завершена.\n")
@@ -69,9 +109,11 @@ def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: 
     
     cats = manifest_data.get("categories", {})
     lights_cnt = cats.get("lights", {}).get("file_count", 0)
-    darks_cnt = cats.get("darks", {}).get("file_count", 0)
-    biases_cnt = (cats.get("bias", {}).get("file_count", 0) + cats.get("biases", {}).get("file_count", 0))
-    flats_cnt = cats.get("flats", {}).get("file_count", 0)
+    
+    # Умный подсчет: берем файлы с диска, но обнуляем те, которых нет в скрипте
+    darks_cnt = cats.get("darks", {}).get("file_count", 0) if script_calib["uses_darks"] else 0
+    biases_cnt = (cats.get("bias", {}).get("file_count", 0) + cats.get("biases", {}).get("file_count", 0)) if script_calib["uses_biases"] else 0
+    flats_cnt = cats.get("flats", {}).get("file_count", 0) if script_calib["uses_flats"] else 0
     
     exptime = 0.0
     lights_dir = object_dir / "lights"
@@ -152,11 +194,9 @@ cd ..
     try:
         keys_dir = object_dir / ".astroprov" / "keys"
         
-        # 1. Генерируем/читаем ключи
         signature.generate_keys(keys_dir)
         pubkey_fp = signature.get_public_key_fingerprint(keys_dir)
 
-        # 2. Создаем финальный JSON-отчет
         proc_report = processing.build_report(
             sequence_path=seq_path,
             output_path=output_fits,
@@ -167,12 +207,10 @@ cd ..
         proc_report_path = object_dir_runs / f"processing-{processing.timestamp_for_filename()}.json"
         processing.save_report(proc_report, proc_report_path)
 
-        # 3. Подписываем SHA-256 хеш этого JSON-отчета
         report_bytes = proc_report_path.read_bytes()
         report_hash = hashlib.sha256(report_bytes).hexdigest()
         sig_hex = signature.sign_data(report_hash.encode('utf-8'), keys_dir)
 
-        # 4. Формируем паспорт
         prov_data = {
             "version": "1.0",
             "id": passport_id,
@@ -189,7 +227,6 @@ cd ..
             "signature": sig_hex
         }
         
-        # 5. Вшиваем в FITS
         fits_prov.write_provenance(output_fits, prov_data)
         print(f"  Post-stack отчет: {proc_report_path.name}")
         print(f"  ✓ Отчет подписан Ed25519 (FP: {pubkey_fp})")

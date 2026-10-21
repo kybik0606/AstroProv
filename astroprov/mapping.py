@@ -74,10 +74,18 @@ def build_mapping(object_dir: Path) -> Path:
             })
 
     # --- ШАГ 2: Сопоставление с обработанными файлами ---
-    # Берем все файлы r_pp_light_*.fit, но ИСКЛЮЧАЕМ финальный стек (stacked)
-    all_processed = (object_dir / "process").glob("r_pp_light_*.fit")
+    # Ищем ВСЕ файлы, начинающиеся на r_ (выровненные), 
+    # и исключаем финальный стек (stacked) и мастер-кадры.
+    all_processed = (object_dir / "process").glob("r_*.fit")
     processed_files = sorted(
-        [p for p in all_processed if "stacked" not in p.stem.lower()]
+        [
+            p for p in all_processed 
+            if "stacked" not in p.stem.lower() 
+            and "master" not in p.stem.lower()
+            and "dark" not in p.stem.lower()
+            and "bias" not in p.stem.lower()
+            and "flat" not in p.stem.lower()
+        ]
     )
 
     # Вместо жесткого падения, просто предупреждаем
