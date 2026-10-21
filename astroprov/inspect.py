@@ -1,4 +1,4 @@
-"""Просмотр паспорта AstroProv (из FITS + манифеста)."""
+"""Viewing the AstroProv passport (from FITS + manifest)."""
 
 import argparse
 import json
@@ -10,7 +10,7 @@ from astroprov import fits_prov
 
 
 def find_manifest_by_id(object_dir: Path, passport_id: str) -> Path | None:
-    """Ищет JSON-манифест по его ID в скрытой папке .astroprov."""
+    """Finds the JSON manifest by its ID in the hidden .astroprov folder."""
     manifests_dir = object_dir / ".astroprov" / "manifests"
     if not manifests_dir.is_dir():
         return None
@@ -23,7 +23,7 @@ def find_manifest_by_id(object_dir: Path, passport_id: str) -> Path | None:
 
 
 def format_time(seconds: float) -> str:
-    """Переводит секунды в красивый формат (часы, минуты)."""
+    """Formats seconds into a readable form (hours, minutes)."""
     if seconds is None:
         return ""
     hours = int(seconds // 3600)
@@ -31,35 +31,35 @@ def format_time(seconds: float) -> str:
     secs = int(seconds % 60)
     
     if hours > 0:
-        return f"{hours} ч {minutes} мин ({int(seconds)} с)"
+        return f"{hours} h {minutes} min ({int(seconds)} s)"
     elif minutes > 0:
-        return f"{minutes} мин {secs} с"
+        return f"{minutes} min {secs} s"
     else:
-        return f"{secs} с"
+        return f"{secs} s"
 
 
 def inspect_fits(fits_path: Path) -> int:
-    """Читает паспорт из FITS, находит манифест и выводит красивый отчёт."""
+    """Reads the passport from FITS, finds the manifest and prints a report."""
     fits_path = fits_path.resolve()
     
     print(f"\n{'='*60}")
-    print(f"ПАСПОРТ ASTROPROV: {fits_path.name}")
+    print(f"ASTROPROV PASSPORT: {fits_path.name}")
     print(f"{'='*60}\n")
 
     if not fits_path.is_file():
-        print(f"ОШИБКА: файл не найден: {fits_path}")
+        print(f"ERROR: file not found: {fits_path}")
         return 1
 
-    # 1. Читаем паспорт из FITS
+    # 1. Read the passport from FITS
     prov = fits_prov.read_provenance(fits_path)
 
     if prov is None:
-        print("ОШИБКА: в этом FITS-файле нет паспорта (HDU 'PROVENANCE').")
+        print("ERROR: this FITS file has no passport (HDU 'PROVENANCE').")
         return 1
 
     passport_id = prov.get("id")
     
-    # 2. Читаем заголовок FITS для выдержки (EXPTIME и STACKCNT)
+    # 2. Read the FITS header for exposure info (EXPTIME and STACKCNT)
     exptime_hdr = None
     stack_count = None
     try:
@@ -68,23 +68,23 @@ def inspect_fits(fits_path: Path) -> int:
             exptime_hdr = header.get("EXPTIME")
             stack_count = header.get("STACKCNT") or header.get("NCOMBINE")
     except Exception as e:
-        print(f"[ВНИМАНИЕ] Не удалось прочитать заголовок FITS: {e}")
+        print(f"[WARNING] Could not read FITS header: {e}")
 
-    # 3. Пытаемся найти манифест по ID (для обратной совместимости со старыми файлами)
+    # 3. Try to find the manifest by ID (for backward compatibility with old files)
     object_dir = fits_path.parent.parent
     manifest_path = find_manifest_by_id(object_dir, passport_id) if passport_id else None
 
-    # 4. Выводим основную информацию
-    print("ОБЩАЯ ИНФОРМАЦИЯ")
-    print(f"  ID паспорта:      {passport_id or '—'}")
-    print(f"  Дата создания:    {prov.get('date', '—')}")
-    print(f"  Версия формата:   {prov.get('version', '—')}")
-    print(f"  Инструмент:       {prov.get('tool', '—')}")
+    # 4. Print general information
+    print("GENERAL INFO")
+    print(f"  Passport ID:      {passport_id or '—'}")
+    print(f"  Created:          {prov.get('date', '—')}")
+    print(f"  Format version:   {prov.get('version', '—')}")
+    print(f"  Tool:             {prov.get('tool', '—')}")
 
-    print(f"\nMERKLE-КОРЕНЬ ИСХОДНЫХ ДАННЫХ (SHA-256)")
+    print(f"\nSOURCE DATA MERKLE ROOT (SHA-256)")
     print(f"  {prov.get('merkle_root', '—')}")
 
-    # 5. Выводим статистику (Приоритет - FITS, если нет - манифест)
+    # 5. Print statistics (priority: FITS, then manifest)
     lights_cnt = prov.get("lights_count")
     
     if lights_cnt is not None:
@@ -92,14 +92,14 @@ def inspect_fits(fits_path: Path) -> int:
         biases_cnt = prov.get("biases_count", 0)
         flats_cnt = prov.get("flats_count", 0)
         
-        print(f"\nСОСТАВ ИСХОДНЫХ ДАННЫХ (из паспорта FITS)")
-        print(f"  Лайтов:     {lights_cnt}")
-        print(f"  Дарков:     {darks_cnt}")
-        print(f"  Биасов:     {biases_cnt}")
-        print(f"  Флэтов:     {flats_cnt}")
+        print(f"\nSOURCE DATA COMPOSITION (from FITS passport)")
+        print(f"  Lights:     {lights_cnt}")
+        print(f"  Darks:      {darks_cnt}")
+        print(f"  Biases:     {biases_cnt}")
+        print(f"  Flats:      {flats_cnt}")
         
         total = lights_cnt + darks_cnt + biases_cnt + flats_cnt
-        print(f"  {'Всего:':<12} {total} файлов")
+        print(f"  {'Total:':<12} {total} files")
     elif manifest_path:
         try:
             manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -111,58 +111,58 @@ def inspect_fits(fits_path: Path) -> int:
                           + cats.get("biases", {}).get("file_count", 0))
             flats_cnt = cats.get("flats", {}).get("file_count", 0)
             
-            print(f"\nСОСТАВ ИСХОДНЫХ ДАННЫХ (из манифеста, старый формат)")
-            print(f"  Лайтов:     {lights_cnt}")
-            print(f"  Дарков:     {darks_cnt}")
-            print(f"  Биасов:     {biases_cnt}")
-            print(f"  Флэтов:     {flats_cnt}")
+            print(f"\nSOURCE DATA COMPOSITION (from manifest, legacy format)")
+            print(f"  Lights:     {lights_cnt}")
+            print(f"  Darks:      {darks_cnt}")
+            print(f"  Biases:     {biases_cnt}")
+            print(f"  Flats:      {flats_cnt}")
             
             total = lights_cnt + darks_cnt + biases_cnt + flats_cnt
-            print(f"  {'Всего:':<12} {total} файлов")
+            print(f"  {'Total:':<12} {total} files")
         except Exception as e:
-            print(f"\n  [ВНИМАНИЕ] Не удалось прочитать манифест: {e}")
+            print(f"\n  [WARNING] Could not read manifest: {e}")
     else:
-        print("\nСОСТАВ ИСХОДНЫХ ДАННЫХ")
-        print("  [НЕТ ДАННЫХ] В этом FITS-файле нет статистики, и манифест не найден.")
+        print("\nSOURCE DATA COMPOSITION")
+        print("  [NO DATA] This FITS has no statistics, and the manifest was not found.")
 
-    # 6. Выводим информацию о выдержке
+    # 6. Print exposure info
     exptime_val = prov.get("exptime")
     if exptime_val is None:
         exptime_val = exptime_hdr
 
     if exptime_val is not None and float(exptime_val) > 0:
-        print(f"\nВЫДЕРЖКА")
-        print(f"  Одного кадра:       {exptime_val} с")
+        print(f"\nEXPOSURE")
+        print(f"  Single frame:       {exptime_val} s")
         
         if stack_count and int(stack_count) > 0:
             total_exp = float(exptime_val) * int(stack_count)
-            print(f"  Кадров в стеке:     {stack_count}")
-            print(f"  Суммарная:          {format_time(total_exp)}")
+            print(f"  Frames in stack:     {stack_count}")
+            print(f"  Total:               {format_time(total_exp)}")
         else:
-            print(f"  [НЕТ ДАННЫХ] В заголовке FITS нет STACKCNT или NCOMBINE.")
+            print(f"  [NO DATA] FITS header has no STACKCNT or NCOMBINE.")
 
     print(f"\n{'='*60}")
-    print("Проверка целостности: используйте `python -m astroprov.verify`")
+    print("Integrity check: use `python -m astroprov.verify`")
     print(f"{'='*60}\n")
 
     return 0
 
 
 def inspect_directory(directory: Path) -> int:
-    """Сканирует папку и показывает паспорта всех FITS-файлов в ней."""
+    """Scans a directory and shows passports of all FITS files in it."""
     directory = directory.resolve()
     if not directory.is_dir():
-        print(f"ОШИБКА: {directory} — не папка")
+        print(f"ERROR: {directory} is not a directory")
         return 1
 
     fits_files = sorted(directory.glob("*.fit")) + sorted(directory.glob("*.fits"))
     
     if not fits_files:
-        print(f"В папке {directory} нет FITS-файлов.")
+        print(f"No FITS files in {directory}.")
         return 1
 
     print(f"\n{'='*60}")
-    print(f"ПОИСК ПАСПОРТОВ В ПАПКЕ: {directory}")
+    print(f"PASSPORT SCAN IN DIRECTORY: {directory}")
     print(f"{'='*60}\n")
 
     with_passport = 0
@@ -178,24 +178,24 @@ def inspect_directory(directory: Path) -> int:
         else:
             print(f"  [NO PASSPORT] {f.name}")
 
-    print(f"\nИтого: {with_passport} с паспортом из {total} файлов\n")
+    print(f"\nTotal: {with_passport} with passport out of {total} files\n")
     return 0
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Просмотр паспорта AstroProv в FITS-файле или папке."
+        description="View the AstroProv passport in a FITS file or directory."
     )
     parser.add_argument(
         "target",
         type=Path,
-        help="Путь к FITS-файлу или папке с FITS-файлами",
+        help="Path to a FITS file or a directory with FITS files",
     )
     args = parser.parse_args()
 
     target = args.target
     if not target.exists():
-        print(f"ОШИБКА: путь не существует: {target}")
+        print(f"ERROR: path does not exist: {target}")
         return 1
 
     if target.is_file():

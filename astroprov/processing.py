@@ -207,7 +207,7 @@ def validate_frame_mapping(
 
         processed_path = processed.get("path")
 
-        # Если кадр потерян (None), мы просто пропускаем его.
+        # If the frame is lost (None), we simply skip it.
         if not isinstance(processed_path, str) or not processed_path:
             continue
 
@@ -595,7 +595,7 @@ def validate_pre_stack_report(
     current_sequence_hash = sha256_file(sequence_path)
 
     if pre_sequence.get("sha256") != current_sequence_hash:
-        # Хеш изменился. Это может быть из-за стекинга в Siril.
+        # The hash has changed. This may be due to Siril stacking.
         recorded_selected = pre_sequence.get("selected_indices", [])
         current_selected = sequence["selected_indices"]
         
@@ -605,8 +605,8 @@ def validate_pre_stack_report(
                 "since the pre-stack report. This is a security violation."
             )
         
-        print("  [INFO] .seq хеш изменился (вероятно, из-за стекинга Siril), "
-              "но список кадров не изменился. Продолжаем.")
+        print("  [INFO] .seq hash changed (probably due to Siril stacking), "
+              "but the frame list has not changed. Continuing.")
 
     checks = {
         "total_frames": sequence["total_frames"],
@@ -684,7 +684,7 @@ def build_report(
     sequence = parse_sequence(sequence_path)
     fits_info = inspect_output_fits(output_path)
 
-    # Получаем passport_id из манифеста
+    # Get passport_id from the manifest
     passport_id = None
     if manifest_path and manifest_path.is_file():
         try:
@@ -743,7 +743,7 @@ def build_report(
         },
         "output_fits": {
             "path": str(output_path),
-            # ВАЖНО: Здесь используется чистый хеш данных, без учета HDU 'PROVENANCE'
+            # IMPORTANT: Here the pure data hash is used, ignoring the 'PROVENANCE' HDU
             "sha256": fits_prov.calculate_fits_data_hash(output_path),
             "size_bytes": output_path.stat().st_size,
             "metadata": fits_info,

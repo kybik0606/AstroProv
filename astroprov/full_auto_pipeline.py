@@ -1,4 +1,4 @@
-"""Полностью автоматический пайплайн без ручного отбора кадров."""
+"""Fully automatic pipeline without manual frame selection."""
 
 import argparse
 import subprocess
@@ -14,22 +14,22 @@ from astroprov import mapping, processing, snapshot, verify, fits_prov, signatur
 
 
 def clean_process_dir(object_dir: Path) -> None:
-    """Очищает папку process от старых файлов."""
+    """Cleans the process directory from old files."""
     process_dir = object_dir / "process"
     if process_dir.exists():
-        print(f"[*] Очистка папки process от старых файлов...")
+        print(f"[*] Cleaning process directory from old files...")
         for item in process_dir.iterdir():
             if item.is_file():
                 item.unlink()
             elif item.is_dir():
                 shutil.rmtree(item)
-        print("    Папка process очищена.\n")
+        print("    Process directory cleaned.\n")
 
 
 def analyze_script_calibration(script_path: Path) -> dict:
     """
-    Читает .ssf скрипт и определяет, какие калибровочные кадры используются.
-    Это нужно, чтобы не записывать в паспорт лишние данные.
+    Reads the .ssf script and determines which calibration frames are used.
+    This is needed to avoid recording unnecessary data in the passport.
     """
     text = script_path.read_text(encoding="utf-8", errors="replace")
     
@@ -39,11 +39,11 @@ def analyze_script_calibration(script_path: Path) -> dict:
     
     for line in text.splitlines():
         line = line.strip()
-        # Пропускаем пустые строки и комментарии
+        # Skip empty lines and comments
         if line.startswith("#") or not line:
             continue
             
-        # Ищем команду калибровки
+        # Look for the calibration command
         if line.startswith("calibrate"):
             if "-dark=" in line:
                 uses_darks = True
@@ -60,9 +60,9 @@ def analyze_script_calibration(script_path: Path) -> dict:
 
 
 def run_siril_cli(siril_exe: Path, script_path: Path, work_dir: Path, action_name: str) -> None:
-    """Запускает Siril CLI с указанным скриптом."""
-    print(f"[*] Запуск Siril CLI: {action_name}")
-    print(f"    Скрипт: {script_path.name}")
+    """Runs Siril CLI with the given script."""
+    print(f"[*] Running Siril CLI: {action_name}")
+    print(f"    Script: {script_path.name}")
     
     cmd = [
         str(siril_exe),
@@ -73,35 +73,35 @@ def run_siril_cli(siril_exe: Path, script_path: Path, work_dir: Path, action_nam
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, check=False)
         if result.returncode != 0:
-            print(f"\n[-] ОШИБКА SIRIL CLI во время '{action_name}':")
+            print(f"\n[-] SIRIL CLI ERROR during '{action_name}':")
             print(result.stdout)
             print(result.stderr)
             sys.exit(1)
     except FileNotFoundError:
-        print(f"\n[-] ОШИБКА: Не найден siril-cli.exe по пути: {siril_exe}")
+        print(f"\n[-] ERROR: siril-cli.exe not found at: {siril_exe}")
         sys.exit(1)
 
 
 def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path):
     object_dir = object_dir.resolve()
     print(f"\n{'='*60}")
-    print(f"ПОЛНЫЙ АВТОПИЛОТ ASTROPROV: {object_dir.name}")
+    print(f"ASTROPROV FULL AUTO PIPELINE: {object_dir.name}")
     print(f"{'='*60}\n")
 
-    # Анализируем скрипт ДО начала работы
-    print("[*] Анализ скрипта Siril...")
+    # Analyze the script BEFORE starting
+    print("[*] Analyzing Siril script...")
     script_calib = analyze_script_calibration(siril_script)
-    print(f"    Дарки в скрипте: {'Да' if script_calib['uses_darks'] else 'Нет'}")
-    print(f"    Биасы в скрипте: {'Да' if script_calib['uses_biases'] else 'Нет'}")
-    print(f"    Флэты в скрипте: {'Да' if script_calib['uses_flats'] else 'Нет'}\n")
+    print(f"    Darks in script: {'Yes' if script_calib['uses_darks'] else 'No'}")
+    print(f"    Biases in script: {'Yes' if script_calib['uses_biases'] else 'No'}")
+    print(f"    Flats in script: {'Yes' if script_calib['uses_flats'] else 'No'}\n")
 
     clean_process_dir(object_dir)
-    run_siril_cli(siril_cli_exe, siril_script, object_dir, "Калибровка и выравнивание")
-    print("  Калибровка завершена.\n")
+    run_siril_cli(siril_cli_exe, siril_script, object_dir, "Calibration and Alignment")
+    print("  Calibration completed.\n")
 
-    print("[2/6] Сканирование исходных данных (snapshot)...")
+    print("[2/6] Hashing input data (snapshot)...")
     manifest_path = snapshot.create_manifest(object_dir)
-    print(f"  Манифест создан: {manifest_path.name}\n")
+    print(f"  Manifest created: {manifest_path.name}\n")
     
     manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
     passport_id = manifest_data["passport_id"]
@@ -110,7 +110,7 @@ def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: 
     cats = manifest_data.get("categories", {})
     lights_cnt = cats.get("lights", {}).get("file_count", 0)
     
-    # Умный подсчет: берем файлы с диска, но обнуляем те, которых нет в скрипте
+    # Smart counting: take files from disk, but zero out those not in the script
     darks_cnt = cats.get("darks", {}).get("file_count", 0) if script_calib["uses_darks"] else 0
     biases_cnt = (cats.get("bias", {}).get("file_count", 0) + cats.get("biases", {}).get("file_count", 0)) if script_calib["uses_biases"] else 0
     flats_cnt = cats.get("flats", {}).get("file_count", 0) if script_calib["uses_flats"] else 0
@@ -123,11 +123,11 @@ def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: 
             with fits.open(first_lights[0], mode="readonly") as h:
                 exptime = h[0].header.get("EXPTIME", 0.0)
 
-    print("[3/6] Создание маппинга (mapping)...")
+    print("[3/6] Creating frame mapping...")
     mapping_path = mapping.build_mapping(object_dir)
-    print(f"  Маппинг создан: {mapping_path.name}\n")
+    print(f"  Mapping created: {mapping_path.name}\n")
 
-    print("[4/6] Фиксация состояния последовательности (pre-stack)...")
+    print("[4/6] Capturing sequence state (pre-stack)...")
     process_dir = object_dir / "process"
     
     seq_files = list(process_dir.glob("r_*.seq"))
@@ -135,12 +135,12 @@ def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: 
         seq_files = list(process_dir.glob("*.seq"))
         
     if not seq_files:
-        print("  ОШИБКА: Файлы .seq не найдены в папке process.")
+        print("  ERROR: .seq files not found in process directory.")
         sys.exit(1)
         
     seq_path = max(seq_files, key=lambda p: p.stat().st_mtime)
     seq_name = seq_path.stem 
-    print(f"  Найден .seq: {seq_path.name}")
+    print(f"  Found .seq: {seq_path.name}")
 
     object_dir_runs = object_dir / ".astroprov" / "runs"
     object_dir_runs.mkdir(parents=True, exist_ok=True)
@@ -153,18 +153,18 @@ def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: 
         )
         report_path = object_dir_runs / f"pre-stack-{processing.timestamp_for_filename()}.json"
         processing.save_report(report, report_path)
-        print(f"  Pre-stack отчет: {report_path.name}\n")
+        print(f"  Pre-stack report: {report_path.name}\n")
     except Exception as exc:
-        print(f"  ОШИБКА при создании pre-stack отчета: {exc}")
+        print(f"  ERROR creating pre-stack report: {exc}")
         sys.exit(1)
 
-    print("[5/6] Автоматический стекинг ВСЕХ доступных кадров...")
+    print("[5/6] Automated stacking of ALL available frames...")
     
     stack_script_path = process_dir / "_stack_full_auto.ssf"
     output_fits_name = f"{seq_name}_stacked"
     
     stack_cmd = f"stack {seq_name} rej 3 3 -nonorm -filter-included -out={output_fits_name}"
-    print(f"[*] Параметры стекинга: {stack_cmd}")
+    print(f"[*] Stacking parameters: {stack_cmd}")
 
     stack_script_content = f"""requires 1.2.0
 cd process
@@ -173,23 +173,23 @@ cd ..
 """
     stack_script_path.write_text(stack_script_content, encoding="utf-8")
 
-    run_siril_cli(siril_cli_exe, stack_script_path, object_dir, "Стекинг")
-    print("  Стекинг завершен.\n")
+    run_siril_cli(siril_cli_exe, stack_script_path, object_dir, "Stacking")
+    print("  Stacking completed.\n")
 
     if stack_script_path.exists():
         stack_script_path.unlink()
 
-    # --- ШАГ 6: ПОДПИСЬ И ВШИВАНИЕ ПАСПОРТА ---
-    print("[6/6] Подпись Ed25519, вшивание паспорта и создание post-stack отчета...")
+    # --- STEP 6: SIGNING AND EMBEDDING PASSPORT ---
+    print("[6/6] Ed25519 signing, embedding passport and creating post-stack report...")
     fits_files = list(process_dir.glob("*.fit"))
     stack_files = [f for f in fits_files if "stacked" in f.stem.lower() or "result" in f.stem.lower()]
     
     if not stack_files:
-        print("  ОШИБКА: Итоговый FITS-файл не найден.")
+        print("  ERROR: Final FITS file not found.")
         sys.exit(1)
     
     output_fits = max(stack_files, key=lambda p: p.stat().st_mtime)
-    print(f"  Найден итоговый FITS: {output_fits.name}")
+    print(f"  Found final FITS: {output_fits.name}")
 
     try:
         keys_dir = object_dir / ".astroprov" / "keys"
@@ -228,45 +228,45 @@ cd ..
         }
         
         fits_prov.write_provenance(output_fits, prov_data)
-        print(f"  Post-stack отчет: {proc_report_path.name}")
-        print(f"  ✓ Отчет подписан Ed25519 (FP: {pubkey_fp})")
+        print(f"  Post-stack report: {proc_report_path.name}")
+        print(f"  Report signed with Ed25519 (FP: {pubkey_fp})")
     except Exception as exc:
-        print(f"  ОШИБКА при создании post-stack отчета: {exc}")
+        print(f"  ERROR creating post-stack report: {exc}")
         sys.exit(1)
 
     print("\n" + "="*60)
-    print("ФИНАЛЬНАЯ ПРОВЕРКА ЦЕЛОСТНОСТИ")
+    print("FINAL INTEGRITY VERIFICATION")
     print("="*60 + "\n")
     
     exit_code = verify.verify_output(str(output_fits), str(proc_report_path))
     
     if exit_code == 0:
-        print("\nПОЛНЫЙ АВТОПИЛОТ ЗАВЕРШЕН УСПЕШНО. Все проверки пройдены.")
+        print("\nFULL AUTO PIPELINE COMPLETED SUCCESSFULLY. All checks passed.")
     else:
-        print("\nПОЛНЫЙ АВТОПИЛОТ ЗАВЕРШЕН С ОШИБКАМИ. Проверь логи выше.")
+        print("\nFULL AUTO PIPELINE COMPLETED WITH ERRORS. Check logs above.")
     
     sys.exit(exit_code)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Полный автопилот AstroProv (без ручного отбора).")
-    parser.add_argument("object_dir", type=Path, help="Папка объекта (например, NGC5906)")
-    parser.add_argument("--script", type=Path, required=True, help="Путь к .ssf скрипту Siril для калибровки")
+    parser = argparse.ArgumentParser(description="AstroProv Full Auto Pipeline (no manual selection).")
+    parser.add_argument("object_dir", type=Path, help="Object directory (e.g., NGC5906)")
+    parser.add_argument("--script", type=Path, required=True, help="Path to Siril .ssf calibration script")
     parser.add_argument(
         "--siril-cli", 
         type=Path, 
         default=Path(r"c:\program files\siril\bin\siril-cli.exe"),
-        help="Путь к siril-cli.exe"
+        help="Path to siril-cli.exe"
     )
     
     args = parser.parse_args()
 
     if not args.object_dir.is_dir():
-        print(f"Ошибка: {args.object_dir} — не папка.")
+        print(f"Error: {args.object_dir} is not a directory.")
         sys.exit(1)
         
     if not args.script.is_file():
-        print(f"Ошибка: Скрипт {args.script} не найден.")
+        print(f"Error: Script {args.script} not found.")
         sys.exit(1)
 
     run_full_auto_pipeline(args.object_dir, args.siril_cli, args.script)

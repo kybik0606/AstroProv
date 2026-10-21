@@ -1,4 +1,4 @@
-"""Модуль для записи и чтения криптографического паспорта в FITS-файл."""
+"""Module for writing and reading the cryptographic passport in a FITS file."""
 
 import io
 import hashlib
@@ -7,11 +7,11 @@ from astropy.io import fits
 
 
 def write_provenance(fits_path: Path, prov_data: dict) -> None:
-    """Добавляет HDU с паспортом (PROVENANCE) в FITS-файл."""
+    """Adds the passport HDU (PROVENANCE) to the FITS file."""
     fits_path = fits_path.resolve()
 
     if not fits_path.is_file():
-        raise FileNotFoundError(f"FITS-файл не найден: {fits_path}")
+        raise FileNotFoundError(f"FITS file not found: {fits_path}")
 
     with fits.open(fits_path, mode="update") as hdul:
         if "PROVENANCE" in hdul:
@@ -19,25 +19,25 @@ def write_provenance(fits_path: Path, prov_data: dict) -> None:
 
         hdu = fits.ImageHDU(name="PROVENANCE")
         
-        # Основные данные
+        # Main data
         hdu.header["PROVVER"] = (str(prov_data.get("version", "1.0")), "")
         hdu.header["PROVID"] = (str(prov_data.get("id", "")), "")
         hdu.header["PROVMRKL"] = (str(prov_data.get("merkle_root", "")), "")
         hdu.header["PROVDATE"] = (str(prov_data.get("date", "")), "")
         hdu.header["PROVTOOL"] = (str(prov_data.get("tool", "AstroProv")), "")
         
-        # Статистика
+        # Statistics
         hdu.header["PROVLIT"] = (int(prov_data.get("lights_count", 0)), "")
         hdu.header["PROVDRK"] = (int(prov_data.get("darks_count", 0)), "")
         hdu.header["PROVBIA"] = (int(prov_data.get("biases_count", 0)), "")
         hdu.header["PROVFLT"] = (int(prov_data.get("flats_count", 0)), "")
         hdu.header["PROVEXP"] = (float(prov_data.get("exptime", 0.0)), "")
 
-        # Криптография
+        # Cryptography
         hdu.header["PROVPUBK"] = (str(prov_data.get("pubkey_fingerprint", "")), "")
         hdu.header["PROVHASH"] = (str(prov_data.get("report_hash", "")), "")
 
-        # Подпись Ed25519 (разбиваем на 3 части)
+        # Ed25519 signature (split into 3 parts)
         sig = str(prov_data.get("signature", ""))
         hdu.header["PROVSIG1"] = (sig[:43], "")
         hdu.header["PROVSIG2"] = (sig[43:86], "")
@@ -48,11 +48,11 @@ def write_provenance(fits_path: Path, prov_data: dict) -> None:
 
 
 def read_provenance(fits_path: Path) -> dict | None:
-    """Читает паспорт из FITS-файла."""
+    """Reads the passport from the FITS file."""
     fits_path = fits_path.resolve()
 
     if not fits_path.is_file():
-        raise FileNotFoundError(f"FITS-файл не найден: {fits_path}")
+        raise FileNotFoundError(f"FITS file not found: {fits_path}")
 
     with fits.open(fits_path, mode="readonly", memmap=False) as hdul:
         if "PROVENANCE" not in hdul:
@@ -60,7 +60,7 @@ def read_provenance(fits_path: Path) -> dict | None:
 
         header = hdul["PROVENANCE"].header
         
-        # Склеиваем подпись обратно
+        # Reassemble the signature
         sig_parts = [
             str(header.get("PROVSIG1", "")),
             str(header.get("PROVSIG2", "")),
@@ -87,24 +87,24 @@ def read_provenance(fits_path: Path) -> dict | None:
 
 def calculate_fits_data_hash(fits_path: Path) -> str:
     """
-    Считает SHA-256 хеш FITS-файла, ПОЛНОСТЬЮ ИГНОРИРУЯ HDU 'PROVENANCE' 
-    и служебные заголовки, которые меняются при его добавлении.
+    Computes the SHA-256 hash of the FITS file, COMPLETELY IGNORING the 'PROVENANCE' HDU
+    and the service headers that change when it is added.
     """
     fits_path = fits_path.resolve()
     if not fits_path.is_file():
-        raise FileNotFoundError(f"FITS-файл не найден: {fits_path}")
+        raise FileNotFoundError(f"FITS file not found: {fits_path}")
 
     with fits.open(fits_path, mode="readonly", memmap=False) as hdul:
-        # Создаем копию HDUList без паспорта
+        # Build a copy of the HDUList without the passport
         clean_hdul = fits.HDUList([hdu.copy() for hdu in hdul if hdu.name != "PROVENANCE"])
         
-        # Очищаем служебные заголовки, которые Astropy меняет автоматически
+        # Clear the service headers that Astropy changes automatically
         for hdu in clean_hdul:
             for key in ("EXTEND", "CHECKSUM", "DATASUM"):
                 if key in hdu.header:
                     del hdu.header[key]
         
-        # Сохраняем во временный буфер в памяти (checksum=False чтобы не генерировать новые суммы)
+        # Save to an in-memory buffer (checksum=False to avoid generating new sums)
         buffer = io.BytesIO()
         clean_hdul.writeto(buffer, checksum=False)
         data_bytes = buffer.getvalue()
@@ -113,31 +113,31 @@ def calculate_fits_data_hash(fits_path: Path) -> str:
 
 
 if __name__ == "__main__":
-    # Простой тест при запуске файла напрямую
+    # Simple test when running the file directly
     import sys
     
     if len(sys.argv) < 2:
-        print("Использование: python -m astroprov.fits_prov <path_to_fits>")
+        print("Usage: python -m astroprov.fits_prov <path_to_fits>")
         sys.exit(1)
         
     test_file = Path(sys.argv[1])
     
-    print(f"Чтение паспорта из {test_file.name}...")
+    print(f"Reading passport from {test_file.name}...")
     try:
         prov = read_provenance(test_file)
         if prov:
-            print("\nПаспорт найден:")
+            print("\nPassport found:")
             for k, v in prov.items():
                 if k == "signature" and v:
-                    print(f"  {k}: {v[:20]}...{v[-10:]} (длина: {len(v)})")
+                    print(f"  {k}: {v[:20]}...{v[-10:]} (length: {len(v)})")
                 else:
                     print(f"  {k}: {v}")
             
-            print("\nРасчет чистого хеша данных (без паспорта)...")
+            print("\nComputing the pure data hash (without passport)...")
             data_hash = calculate_fits_data_hash(test_file)
             print(f"  Data SHA-256: {data_hash}")
             
         else:
-            print("Паспорт не найден (HDU 'PROVENANCE' отсутствует).")
+            print("Passport not found (HDU 'PROVENANCE' is missing).")
     except Exception as e:
-        print(f"Ошибка: {e}")
+        print(f"Error: {e}")

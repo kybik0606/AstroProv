@@ -1,4 +1,4 @@
-"""Создание и обновление маппинга между оригинальными кадрами NINA и обработанными файлами Siril."""
+"""Creating and updating the mapping between original NINA frames and processed Siril files."""
 
 import argparse
 import json
@@ -12,7 +12,7 @@ from astropy.io import fits
 
 
 def file_hash(path: Path) -> str:
-    """Вычисляет SHA-256 файла потоково."""
+    """Computes a file's SHA-256 in streaming mode."""
     h = sha256()
     with path.open("rb") as f:
         for block in iter(lambda: f.read(1024 * 1024), b""):
@@ -21,7 +21,7 @@ def file_hash(path: Path) -> str:
 
 
 def metadata(path: Path) -> dict:
-    """Читает метаданные из FITS-заголовка для сопоставления."""
+    """Reads metadata from the FITS header for matching."""
     with fits.open(path, memmap=False) as hdul:
         h = hdul[0].header
         return {
@@ -33,7 +33,7 @@ def metadata(path: Path) -> dict:
 
 
 def same_metadata(a: dict, b: dict) -> bool:
-    """Сравнивает метаданные двух кадров."""
+    """Compares metadata of two frames."""
     delta = abs((a["date"] - b["date"]).total_seconds())
     return (
         delta <= 1.0
@@ -44,18 +44,18 @@ def same_metadata(a: dict, b: dict) -> bool:
 
 
 def build_mapping(object_dir: Path) -> Path:
-    """Создает или обновляет файл маппинга."""
+    """Creates or updates the mapping file."""
     mapping_path = object_dir / "astroprov_frame_mapping.json"
 
-    # --- ШАГ 1: Создаем или читаем базу маппинга ---
+    # --- STEP 1: Create or read the mapping base ---
     if not mapping_path.exists():
-        print("Файл маппинга не найден. Создаю с нуля...")
+        print("Mapping file not found. Creating from scratch...")
         mappings = []
     else:
         mapping_data = json.loads(mapping_path.read_text(encoding="utf-8"))
         mappings = mapping_data.get("mappings", [])
         if not mappings:
-            print("Файл маппинга пустой. Заполняю структуру...")
+            print("Mapping file is empty. Filling the structure...")
 
     if not mappings:
         lights_dir = object_dir / "lights"
@@ -73,9 +73,9 @@ def build_mapping(object_dir: Path) -> Path:
                 }
             })
 
-    # --- ШАГ 2: Сопоставление с обработанными файлами ---
-    # Ищем ВСЕ файлы, начинающиеся на r_ (выровненные), 
-    # и исключаем финальный стек (stacked) и мастер-кадры.
+    # --- STEP 2: Match with processed files ---
+    # Look for ALL files starting with r_ (aligned),
+    # and exclude the final stack (stacked) and master frames.
     all_processed = (object_dir / "process").glob("r_*.fit")
     processed_files = sorted(
         [
@@ -88,11 +88,11 @@ def build_mapping(object_dir: Path) -> Path:
         ]
     )
 
-    # Вместо жесткого падения, просто предупреждаем
+    # Instead of failing hard, just warn
     if len(processed_files) != len(mappings):
-        print(f"ВНИМАНИЕ: В базе {len(mappings)} оригиналов, "
-              f"а обработанных FITS найдено {len(processed_files)}.")
-        print("Продолжаем... Некоторые кадры могли быть отбракованы Siril.")
+        print(f"WARNING: {len(mappings)} originals in the base, "
+              f"but {len(processed_files)} processed FITS found.")
+        print("Continuing... Some frames may have been rejected by Siril.")
 
     processed_meta = {p: metadata(p) for p in processed_files}
     used = set()
@@ -104,7 +104,7 @@ def build_mapping(object_dir: Path) -> Path:
 
         actual_original_hash = file_hash(original)
         if actual_original_hash != item["original"]["sha256"]:
-            raise ValueError(f"Хеш исходного кадра изменился: {original}")
+            raise ValueError(f"Original frame hash changed: {original}")
 
         original_meta = metadata(original)
         matches = [
@@ -113,8 +113,8 @@ def build_mapping(object_dir: Path) -> Path:
         ]
 
         if len(matches) == 0:
-            # Кадр потерян (отбракован Siril)
-            print(f"  [MISSING] {original.name} — не найден в process")
+            # Frame lost (rejected by Siril)
+            print(f"  [MISSING] {original.name} — not found in process")
             item["processed"]["path"] = None
             item["processed"]["sha256"] = None
             item["matching"] = {"method": "NOT_FOUND", "date_obs_delta_seconds": None}
@@ -123,7 +123,7 @@ def build_mapping(object_dir: Path) -> Path:
             
         if len(matches) > 1:
             raise ValueError(
-                f"Для {original.name} найдено более одного совпадения: {len(matches)}."
+                f"Multiple matches found for {original.name}: {len(matches)}."
             )
 
         processed = matches[0]
@@ -131,11 +131,11 @@ def build_mapping(object_dir: Path) -> Path:
         delta = abs((original_meta["date"] - processed_meta[processed]["date"]).total_seconds())
         updates.append((item, processed, delta))
 
-    # --- ШАГ 3: Запись результатов ---
+    # --- STEP 3: Write results ---
     if mapping_path.exists():
         backup = mapping_path.with_name("astroprov_frame_mapping.backup.json")
         shutil.copy2(mapping_path, backup)
-        print(f"Резервная копия: {backup}")
+        print(f"Backup: {backup}")
 
     for item, processed, delta in updates:
         item["processed"]["path"] = processed.relative_to(object_dir).as_posix()
@@ -162,22 +162,22 @@ def build_mapping(object_dir: Path) -> Path:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Создание маппинга NINA <-> Siril.")
-    parser.add_argument("object_dir", type=Path, help="Папка объекта, например NGC5906")
+    parser = argparse.ArgumentParser(description="Creating NINA <-> Siril mapping.")
+    parser.add_argument("object_dir", type=Path, help="Object directory, e.g. NGC5906")
     args = parser.parse_args()
 
     try:
         path = build_mapping(args.object_dir.resolve())
         data = json.loads(path.read_text(encoding="utf-8"))
         
-        print(f"\nMapping обновлён и сохранен: {path}")
-        print(f"Всего оригиналов: {data['matching_count']}")
-        print(f"Успешно сопоставлено: {data['matched_count']}")
-        print(f"Потеряно (отбраковано): {data['missing_count']}")
-        print("Исходные хеши проверены.")
+        print(f"\nMapping updated and saved: {path}")
+        print(f"Total originals: {data['matching_count']}")
+        print(f"Successfully matched: {data['matched_count']}")
+        print(f"Lost (rejected): {data['missing_count']}")
+        print("Source hashes verified.")
         
     except (OSError, ValueError, KeyError) as exc:
-        print(f"ОШИБКА: {exc}", file=sys.stderr)
+        print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
 
 

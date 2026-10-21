@@ -1,5 +1,4 @@
-
-"""Создание манифеста исходных астрономических данных."""
+"""Creating a manifest of source astronomical data."""
 
 import argparse
 import hashlib
@@ -9,10 +8,12 @@ import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 
+from tqdm import tqdm
+
 
 CHUNK_SIZE = 1024 * 1024
 
-# Каталоги, содержащие исходные кадры.
+# Directories containing source frames.
 SOURCE_DIRS = (
     "lights",
     "darks",
@@ -25,7 +26,7 @@ SOURCE_DIRS = (
 
 
 def sha256_file(path: Path) -> str:
-    """Вычисляет SHA-256 файла потоково, не загружая его целиком."""
+    """Computes a file's SHA-256 in streaming mode, without loading it fully."""
     digest = hashlib.sha256()
 
     with path.open("rb") as file:
@@ -40,15 +41,15 @@ def sha256_file(path: Path) -> str:
 
 def merkle_root(files: list[dict]) -> str:
     """
-    Строит Merkle root по относительным путям и SHA-256 файлов.
+    Builds the Merkle root from relative paths and file SHA-256 hashes.
 
-    Формат:
+    Format:
       leaf = SHA256(0x00 || canonical_json)
       node = SHA256(0x01 || left || right)
       empty = SHA256(0x02)
 
-    Если уровень содержит нечётное число узлов,
-    последний узел дублируется.
+    If a level contains an odd number of nodes,
+    the last node is duplicated.
     """
     if not files:
         return hashlib.sha256(b"\x02").hexdigest()
@@ -91,7 +92,7 @@ def merkle_root(files: list[dict]) -> str:
 
 
 def discover_source_dirs(object_dir: Path) -> list[Path]:
-    """Находит известные каталоги исходных кадров."""
+    """Finds known source frame directories."""
     found = []
 
     for name in SOURCE_DIRS:
@@ -104,7 +105,7 @@ def discover_source_dirs(object_dir: Path) -> list[Path]:
 
 
 def snapshot_directory(object_dir: Path) -> dict:
-    """Сканирует исходные каталоги и формирует данные манифеста."""
+    """Scans source directories and builds manifest data."""
     categories = {}
 
     for source_dir in discover_source_dirs(object_dir):
@@ -120,10 +121,30 @@ def snapshot_directory(object_dir: Path) -> dict:
             key=lambda path: path.relative_to(object_dir).as_posix(),
         )
 
-        for path in paths:
-            relative_path = path.relative_to(object_dir).as_posix()
+        total = len(paths)
 
-            print(f"Хеширование: {relative_path}")
+        if total == 0:
+            categories[category_name] = {
+                "file_count": 0,
+                "merkle_root": merkle_root([]),
+                "files": [],
+            }
+            continue
+
+        pbar = tqdm(
+            total=total,
+            bar_format="{desc}",
+            dynamic_ncols=True,
+            disable=None,
+        )
+
+        for idx, path in enumerate(paths, 1):
+            pbar.set_description_str(
+                f"{category_name}: {idx}/{total} {path.name}",
+                refresh=True,
+            )
+
+            relative_path = path.relative_to(object_dir).as_posix()
 
             file_entries.append(
                 {
@@ -133,6 +154,14 @@ def snapshot_directory(object_dir: Path) -> dict:
                 }
             )
 
+            pbar.update(1)
+
+        pbar.set_description_str(
+            f"{category_name}: {total}/{total} done",
+            refresh=True,
+        )
+        pbar.close()
+
         categories[category_name] = {
             "file_count": len(file_entries),
             "merkle_root": merkle_root(file_entries),
@@ -141,7 +170,7 @@ def snapshot_directory(object_dir: Path) -> dict:
 
     if not categories:
         raise ValueError(
-            "Не найдены каталоги исходных данных: "
+            "No source data directories found: "
             + ", ".join(SOURCE_DIRS)
         )
 
@@ -149,23 +178,23 @@ def snapshot_directory(object_dir: Path) -> dict:
 
 
 def create_manifest(object_dir: Path, output: Path | None = None) -> Path:
-    """Создаёт JSON-манифест и возвращает путь к нему."""
+    """Creates a JSON manifest and returns its path."""
     object_dir = object_dir.resolve()
 
     if not object_dir.exists():
         raise FileNotFoundError(
-            f"Каталог не найден: {object_dir}"
+            f"Directory not found: {object_dir}"
         )
 
     if not object_dir.is_dir():
         raise NotADirectoryError(
-            f"Это не каталог: {object_dir}"
+            f"Not a directory: {object_dir}"
         )
 
     passport_id = str(uuid.uuid4())
 
-    print(f"Объект: {object_dir.name}")
-    print("Начинаем сканирование исходных данных...")
+    print(f"Object: {object_dir.name}")
+    print("Starting source data scan...")
 
     categories = snapshot_directory(object_dir)
 
@@ -201,19 +230,19 @@ def create_manifest(object_dir: Path, output: Path | None = None) -> Path:
         encoding="utf-8",
     )
 
-    print("\nМАНИФЕСТ СОЗДАН")
+    print("\nMANIFEST CREATED")
     print(f"ID: {passport_id}")
-    print(f"Файл: {output}")
+    print(f"File: {output}")
 
     for name, category in categories.items():
         print(
-            f"  {name}: {category['file_count']} файлов; "
+            f"  {name}: {category['file_count']} files; "
             f"Merkle root = {category['merkle_root']}"
         )
 
     print(
-        "\nВажно: манифест фиксирует найденные файлы, "
-        "а не подтверждает их фактическое участие в стеке."
+        "\nNote: the manifest records discovered files, "
+        "not proof of their actual participation in the stack."
     )
 
     return output
@@ -221,17 +250,17 @@ def create_manifest(object_dir: Path, output: Path | None = None) -> Path:
 
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="Создание SHA-256 и Merkle-манифеста."
+        description="Creating a SHA-256 and Merkle manifest."
     )
     parser.add_argument(
         "object_dir",
         type=Path,
-        help="Папка объекта, например NGC5906",
+        help="Object directory, e.g. NGC5906",
     )
     parser.add_argument(
         "--output",
         type=Path,
-        help="Необязательный путь к JSON-манифесту",
+        help="Optional path to the JSON manifest",
     )
 
     args = parser.parse_args()

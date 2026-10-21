@@ -1,4 +1,4 @@
-"""Модуль для генерации ключей Ed25519, подписи и проверки данных."""
+"""Module for Ed25519 key generation, signing and verification."""
 
 import hashlib
 from pathlib import Path
@@ -7,20 +7,20 @@ from cryptography.hazmat.primitives import serialization
 
 
 def generate_keys(keys_dir: Path) -> None:
-    """Генерирует пару ключей (приватный и публичный), если их еще нет."""
+    """Generates a key pair (private and public) if they don't exist yet."""
     keys_dir.mkdir(parents=True, exist_ok=True)
     
     priv_path = keys_dir / "private_key.pem"
     pub_path = keys_dir / "public_key.pem"
 
     if priv_path.exists() and pub_path.exists():
-        return  # Ключи уже существуют
+        return  # Keys already exist
 
-    # Генерируем ключи
+    # Generate keys
     private_key = ed25519.Ed25519PrivateKey.generate()
     public_key = private_key.public_key()
 
-    # Сохраняем приватный ключ (только для владельца)
+    # Save the private key (owner only)
     with open(priv_path, "wb") as f:
         f.write(private_key.private_bytes(
             encoding=serialization.Encoding.PEM,
@@ -28,18 +28,18 @@ def generate_keys(keys_dir: Path) -> None:
             encryption_algorithm=serialization.NoEncryption()
         ))
 
-    # Сохраняем публичный ключ
+    # Save the public key
     with open(pub_path, "wb") as f:
         f.write(public_key.public_bytes(
             encoding=serialization.Encoding.PEM,
             format=serialization.PublicFormat.SubjectPublicKeyInfo
         ))
     
-    print(f"  ✓ Сгенерированы новые ключи Ed25519 в {keys_dir}")
+    print(f"  Generated new Ed25519 keys in {keys_dir}")
 
 
 def get_public_key_fingerprint(keys_dir: Path) -> str:
-    """Возвращает короткий SHA-256 отпечаток публичного ключа."""
+    """Returns a short SHA-256 fingerprint of the public key."""
     pub_path = keys_dir / "public_key.pem"
     if not pub_path.exists():
         return "NO_KEY"
@@ -50,11 +50,11 @@ def get_public_key_fingerprint(keys_dir: Path) -> str:
 
 
 def sign_data(data_bytes: bytes, keys_dir: Path) -> str:
-    """Подписывает данные приватным ключом. Возвращает hex-строку подписи."""
+    """Signs data with the private key. Returns the signature as a hex string."""
     priv_path = keys_dir / "private_key.pem"
     
     if not priv_path.exists():
-        raise FileNotFoundError(f"Приватный ключ не найден: {priv_path}")
+        raise FileNotFoundError(f"Private key not found: {priv_path}")
 
     with open(priv_path, "rb") as f:
         private_key = serialization.load_pem_private_key(
@@ -66,7 +66,7 @@ def sign_data(data_bytes: bytes, keys_dir: Path) -> str:
 
 
 def verify_signature(data_bytes: bytes, signature_hex: str, keys_dir: Path) -> bool:
-    """Проверяет подпись с помощью публичного ключа."""
+    """Verifies the signature using the public key."""
     pub_path = keys_dir / "public_key.pem"
     
     if not pub_path.exists():
