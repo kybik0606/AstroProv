@@ -14,6 +14,7 @@ NGC5906/
 .vscode/
 
 # Secrets and private keys
+.astroprov/keys/
 .env
 *.pem
 *.key

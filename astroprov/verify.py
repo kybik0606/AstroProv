@@ -5,7 +5,9 @@ import hashlib
 import json
 import sys
 from pathlib import Path
+
 from astropy.io import fits
+from astroprov import signature, fits_prov
 
 
 def sha256_file(path: Path) -> str:
@@ -94,18 +96,33 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
 
         report = read_json(report_path)
 
-        # --- НОВАЯ ПРОВЕРКА: HDU PROVENANCE В ФАЙЛЕ ---
+        # --- ЧТЕНИЕ ПАСПОРТА ИЗ FITS (HDU PROVENANCE) ---
         fits_prov_id = None
+        fits_report_hash = None
+        fits_sig = None
+        fits_pubkey_fp = None
+        
         try:
             with fits.open(output, mode="readonly") as hdul:
                 if "PROVENANCE" not in hdul:
                     verifier.fail("В FITS отсутствует HDU с паспортом (PROVENANCE)!")
                 else:
-                    fits_prov_id = hdul["PROVENANCE"].header.get("PROVID")
+                    hdr = hdul["PROVENANCE"].header
+                    fits_prov_id = hdr.get("PROVID")
+                    fits_report_hash = hdr.get("PROVHASH")
+                    fits_pubkey_fp = hdr.get("PROVPUBK")
+                    
+                    # Склеиваем подпись из 3 частей
+                    sig1 = str(hdr.get("PROVSIG1", ""))
+                    sig2 = str(hdr.get("PROVSIG2", ""))
+                    sig3 = str(hdr.get("PROVSIG3", ""))
+                    fits_sig = (sig1 + sig2 + sig3).strip()
+                    
                     verifier.ok(f"Паспорт в FITS найден. ID: {fits_prov_id}")
         except Exception as e:
             verifier.fail(f"Ошибка чтения FITS-паспорта: {e}")
 
+        # --- ПРОВЕРКА СХЕМЫ И ID ---
         if report.get("schema") != "astroprov-processing-v2":
             verifier.fail("Неизвестная схема processing-отчёта")
         elif report.get("stage") != "post-stack":
@@ -122,6 +139,33 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
             else:
                 verifier.ok("ID паспорта в FITS совпадает с ID в JSON-отчете")
 
+        # --- ПРОВЕРКА ЦИФРОВОЙ ПОДПИСИ (ED25519) ---
+        if fits_sig and fits_report_hash:
+            # 1. Проверяем, что JSON-отчет не изменился (сверяем его хеш)
+            current_report_bytes = report_path.read_bytes()
+            current_report_hash = hashlib.sha256(current_report_bytes).hexdigest()
+            
+            if current_report_hash != fits_report_hash:
+                verifier.fail("Хеш JSON-отчета не совпадает с зафиксированным в FITS (отчет был изменен)!")
+            else:
+                verifier.ok("Хеш JSON-отчета совпадает с зафиксированным в FITS")
+            
+            # 2. Проверяем саму подпись
+            keys_dir = output.parent.parent / ".astroprov" / "keys"
+            is_valid_sig = signature.verify_signature(
+                fits_report_hash.encode('utf-8'), 
+                fits_sig, 
+                keys_dir
+            )
+            
+            if is_valid_sig:
+                verifier.ok(f"Цифровая подпись Ed25519 верна (FP: {fits_pubkey_fp})")
+            else:
+                verifier.fail("Цифровая подпись НЕВЕРНА! Файл подписи не соответствует ключу или данные подменены.")
+        else:
+            verifier.fail("В паспорте отсутствует цифровая подпись (PROVSIG или PROVHASH).")
+
+        # --- ПРОВЕРКА ХЕШЕЙ ОСТАЛЬНЫХ АРТЕФАКТОВ ---
         recorded_output = report.get("output_fits", {})
         report_output_path = recorded_output.get("path")
 
@@ -130,8 +174,13 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
         elif Path(report_output_path).resolve() != output:
             verifier.fail("Отчёт относится к другому итоговому FITS")
 
+        # ВАЖНО: Используем calculate_fits_data_hash вместо sha256_file!
         if recorded_output.get("sha256"):
-            verifier.check_hash(output, recorded_output["sha256"], "Итоговый FITS")
+            actual_data_hash = fits_prov.calculate_fits_data_hash(output)
+            if actual_data_hash == recorded_output["sha256"]:
+                verifier.ok("Итоговый FITS (данные без паспорта): SHA-256 совпадает")
+            else:
+                verifier.fail("Итоговый FITS: SHA-256 данных НЕ совпадает!")
         else:
             verifier.fail("В отчёте отсутствует SHA-256 итогового FITS")
 
@@ -311,7 +360,7 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
             return 1
 
         print("\nВЕРДИКТ: PASS — файлы и отчёты согласуются с зафиксированной цепочкой AstroProv.")
-        print("Это подтверждает целостность и согласованность артефактов, но не является независимым доказательством выполнения Siril.")
+        print("Это подтверждает целостность и согласованность артефактов, а также валидность цифровой подписи.")
         return 0
 
     except (OSError, ValueError, TypeError, KeyError) as exc:

@@ -5,11 +5,12 @@ import subprocess
 import sys
 import shutil
 import json
+import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
 from astropy.io import fits
 
-from astroprov import mapping, processing, snapshot, verify, fits_prov
+from astroprov import mapping, processing, snapshot, verify, fits_prov, signature
 
 
 def clean_process_dir(object_dir: Path) -> None:
@@ -73,7 +74,6 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
     biases_cnt = (cats.get("bias", {}).get("file_count", 0) + cats.get("biases", {}).get("file_count", 0))
     flats_cnt = cats.get("flats", {}).get("file_count", 0)
     
-    # Получаем выдержку из первого лайта
     exptime = 0.0
     lights_dir = object_dir / "lights"
     if lights_dir.is_dir():
@@ -167,8 +167,32 @@ cd ..
     output_fits = max(stack_files, key=lambda p: p.stat().st_mtime)
     print(f"  Найден итоговый FITS: {output_fits.name}\n")
 
-    print("[7/7] Вшивание паспорта (fits_prov) и создание post-stack отчета...")
+    # --- ШАГ 7: ПОДПИСЬ И ВШИВАНИЕ ПАСПОРТА ---
+    print("[7/7] Подпись Ed25519, вшивание паспорта и создание post-stack отчета...")
     try:
+        keys_dir = object_dir / ".astroprov" / "keys"
+        
+        # 1. Генерируем/читаем ключи
+        signature.generate_keys(keys_dir)
+        pubkey_fp = signature.get_public_key_fingerprint(keys_dir)
+
+        # 2. Создаем финальный JSON-отчет (он посчитает хеш данных БЕЗ учета паспорта)
+        proc_report = processing.build_report(
+            sequence_path=seq_path,
+            output_path=output_fits,
+            mapping_path=mapping_path,
+            manifest_path=manifest_path,
+            pre_stack_report_path=report_path
+        )
+        proc_report_path = object_dir_runs / f"processing-{processing.timestamp_for_filename()}.json"
+        processing.save_report(proc_report, proc_report_path)
+
+        # 3. Подписываем SHA-256 хеш этого JSON-отчета
+        report_bytes = proc_report_path.read_bytes()
+        report_hash = hashlib.sha256(report_bytes).hexdigest()
+        sig_hex = signature.sign_data(report_hash.encode('utf-8'), keys_dir)
+
+        # 4. Формируем паспорт с подписью
         prov_data = {
             "version": "1.0",
             "id": passport_id,
@@ -179,21 +203,17 @@ cd ..
             "darks_count": darks_cnt,
             "biases_count": biases_cnt,
             "flats_count": flats_cnt,
-            "exptime": exptime
+            "exptime": exptime,
+            "pubkey_fingerprint": pubkey_fp,
+            "report_hash": report_hash,
+            "signature": sig_hex
         }
         
+        # 5. Вшиваем паспорт в FITS
         fits_prov.write_provenance(output_fits, prov_data)
         
-        proc_report = processing.build_report(
-            sequence_path=seq_path,
-            output_path=output_fits,
-            mapping_path=mapping_path,
-            manifest_path=manifest_path,
-            pre_stack_report_path=report_path
-        )
-        proc_report_path = object_dir_runs / f"processing-{processing.timestamp_for_filename()}.json"
-        processing.save_report(proc_report, proc_report_path)
-        print(f"  Post-stack отчет: {proc_report_path.name}\n")
+        print(f"  Post-stack отчет: {proc_report_path.name}")
+        print(f"  ✓ Отчет подписан Ed25519 (FP: {pubkey_fp})")
     except Exception as exc:
         print(f"  ОШИБКА при создании post-stack отчета: {exc}")
         sys.exit(1)

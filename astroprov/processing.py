@@ -9,6 +9,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from astropy.io import fits
+from astroprov import fits_prov
 
 
 SELECTION_RE = re.compile(r"^\s*I\s+(\d+)\s+([01])\s*$")
@@ -207,8 +208,6 @@ def validate_frame_mapping(
         processed_path = processed.get("path")
 
         # Если кадр потерян (None), мы просто пропускаем его.
-        # Он не попадет в словарь by_processed_path, и мы не сможем
-        # сопоставить его с .seq, что вызовет ошибку ниже.
         if not isinstance(processed_path, str) or not processed_path:
             continue
 
@@ -597,7 +596,6 @@ def validate_pre_stack_report(
 
     if pre_sequence.get("sha256") != current_sequence_hash:
         # Хеш изменился. Это может быть из-за стекинга в Siril.
-        # Проверяем, не изменился ли СПИСОК кадров (selected_indices).
         recorded_selected = pre_sequence.get("selected_indices", [])
         current_selected = sequence["selected_indices"]
         
@@ -607,8 +605,6 @@ def validate_pre_stack_report(
                 "since the pre-stack report. This is a security violation."
             )
         
-        # Список кадров не изменился, только метаданные Siril.
-        # Это ожидаемо после стекинга.
         print("  [INFO] .seq хеш изменился (вероятно, из-за стекинга Siril), "
               "но список кадров не изменился. Продолжаем.")
 
@@ -676,9 +672,14 @@ def build_report(
     warnings = []
 
     if not sequence_path.is_file():
-        raise FileNotFoundError(f"Sequence file not found: {sequence_path}")
+        raise FileNotFoundError(
+            f"Sequence file not found: {sequence_path}"
+        )
+
     if not output_path.is_file():
-        raise FileNotFoundError(f"Output FITS not found: {output_path}")
+        raise FileNotFoundError(
+            f"Output FITS not found: {output_path}"
+        )
 
     sequence = parse_sequence(sequence_path)
     fits_info = inspect_output_fits(output_path)
@@ -728,7 +729,7 @@ def build_report(
         "schema": "astroprov-processing-v2",
         "stage": "post-stack",
         "created_utc": utc_timestamp(),
-        "passport_id": passport_id,  # <--- ДОБАВЛЕНО СЮДА
+        "passport_id": passport_id,
         "sequence": {
             "path": str(sequence_path),
             "sha256": sha256_file(sequence_path),
@@ -742,7 +743,8 @@ def build_report(
         },
         "output_fits": {
             "path": str(output_path),
-            "sha256": sha256_file(output_path),
+            # ВАЖНО: Здесь используется чистый хеш данных, без учета HDU 'PROVENANCE'
+            "sha256": fits_prov.calculate_fits_data_hash(output_path),
             "size_bytes": output_path.stat().st_size,
             "metadata": fits_info,
         },
@@ -879,4 +881,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-    
