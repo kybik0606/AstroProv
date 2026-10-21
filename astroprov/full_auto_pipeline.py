@@ -4,8 +4,10 @@ import argparse
 import subprocess
 import sys
 import shutil
+import json
 from datetime import datetime, timezone
 from pathlib import Path
+from astropy.io import fits
 
 from astroprov import mapping, processing, snapshot, verify, fits_prov
 
@@ -52,27 +54,36 @@ def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: 
     print(f"ПОЛНЫЙ АВТОПИЛОТ ASTROPROV: {object_dir.name}")
     print(f"{'='*60}\n")
 
-    # --- ШАГ 1: Очистка и калибровка ---
     clean_process_dir(object_dir)
     run_siril_cli(siril_cli_exe, siril_script, object_dir, "Калибровка и выравнивание")
     print("  Калибровка завершена.\n")
 
-    # --- ШАГ 2: Snapshot ---
     print("[2/6] Сканирование исходных данных (snapshot)...")
     manifest_path = snapshot.create_manifest(object_dir)
     print(f"  Манифест создан: {manifest_path.name}\n")
     
-    import json
     manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
     passport_id = manifest_data["passport_id"]
     merkle_root = manifest_data["categories"]["lights"]["merkle_root"]
+    
+    cats = manifest_data.get("categories", {})
+    lights_cnt = cats.get("lights", {}).get("file_count", 0)
+    darks_cnt = cats.get("darks", {}).get("file_count", 0)
+    biases_cnt = (cats.get("bias", {}).get("file_count", 0) + cats.get("biases", {}).get("file_count", 0))
+    flats_cnt = cats.get("flats", {}).get("file_count", 0)
+    
+    exptime = 0.0
+    lights_dir = object_dir / "lights"
+    if lights_dir.is_dir():
+        first_lights = sorted(lights_dir.glob("*.fits"))
+        if first_lights:
+            with fits.open(first_lights[0], mode="readonly") as h:
+                exptime = h[0].header.get("EXPTIME", 0.0)
 
-    # --- ШАГ 3: Mapping ---
     print("[3/6] Создание маппинга (mapping)...")
     mapping_path = mapping.build_mapping(object_dir)
     print(f"  Маппинг создан: {mapping_path.name}\n")
 
-    # --- ШАГ 4: Поиск .seq и Pre-stack ---
     print("[4/6] Фиксация состояния последовательности (pre-stack)...")
     process_dir = object_dir / "process"
     
@@ -104,7 +115,6 @@ def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: 
         print(f"  ОШИБКА при создании pre-stack отчета: {exc}")
         sys.exit(1)
 
-    # --- ШАГ 5: Автоматический стекинг ---
     print("[5/6] Автоматический стекинг ВСЕХ доступных кадров...")
     
     stack_script_path = process_dir / "_stack_full_auto.ssf"
@@ -126,7 +136,6 @@ cd ..
     if stack_script_path.exists():
         stack_script_path.unlink()
 
-    # --- ШАГ 6: Поиск FITS, вшивание паспорта и Post-stack ---
     print("[6/6] Вшивание паспорта (fits_prov) и создание post-stack отчета...")
     fits_files = list(process_dir.glob("*.fit"))
     stack_files = [f for f in fits_files if "stacked" in f.stem.lower() or "result" in f.stem.lower()]
@@ -139,17 +148,20 @@ cd ..
     print(f"  Найден итоговый FITS: {output_fits.name}")
 
     try:
-        # Вшиваем паспорт
         prov_data = {
             "version": "1.0",
             "id": passport_id,
             "merkle_root": merkle_root,
             "date": datetime.now(timezone.utc).isoformat(),
-            "tool": "AstroProv"
+            "tool": "AstroProv",
+            "lights_count": lights_cnt,
+            "darks_count": darks_cnt,
+            "biases_count": biases_cnt,
+            "flats_count": flats_cnt,
+            "exptime": exptime
         }
         fits_prov.write_provenance(output_fits, prov_data)
         
-        # Создаем отчет (с новым хешем файла)
         proc_report = processing.build_report(
             sequence_path=seq_path,
             output_path=output_fits,
@@ -164,7 +176,6 @@ cd ..
         print(f"  ОШИБКА при создании post-stack отчета: {exc}")
         sys.exit(1)
 
-    # --- ШАГ 7: Verify ---
     print("\n" + "="*60)
     print("ФИНАЛЬНАЯ ПРОВЕРКА ЦЕЛОСТНОСТИ")
     print("="*60 + "\n")

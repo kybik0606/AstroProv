@@ -55,24 +55,22 @@ def inspect_fits(fits_path: Path) -> int:
 
     if prov is None:
         print("ОШИБКА: в этом FITS-файле нет паспорта (HDU 'PROVENANCE').")
-        print("Это значит, что файл либо не обрабатывался через AstroProv,")
-        print("либо был создан до того, как паспорт был вшит.")
         return 1
 
     passport_id = prov.get("id")
     
-    # 2. Читаем заголовок самого FITS-файла для выдержек
-    exptime = None
+    # 2. Читаем заголовок FITS для выдержки (EXPTIME и STACKCNT)
+    exptime_hdr = None
     stack_count = None
     try:
         with fits.open(fits_path, mode="readonly") as hdul:
             header = hdul[0].header
-            exptime = header.get("EXPTIME")
+            exptime_hdr = header.get("EXPTIME")
             stack_count = header.get("STACKCNT") or header.get("NCOMBINE")
     except Exception as e:
         print(f"[ВНИМАНИЕ] Не удалось прочитать заголовок FITS: {e}")
 
-    # 3. Пытаемся найти манифест по ID
+    # 3. Пытаемся найти манифест по ID (для обратной совместимости со старыми файлами)
     object_dir = fits_path.parent.parent
     manifest_path = find_manifest_by_id(object_dir, passport_id) if passport_id else None
 
@@ -86,8 +84,23 @@ def inspect_fits(fits_path: Path) -> int:
     print(f"\nMERKLE-КОРЕНЬ ИСХОДНЫХ ДАННЫХ (SHA-256)")
     print(f"  {prov.get('merkle_root', '—')}")
 
-    # 5. Выводим статистику
-    if manifest_path:
+    # 5. Выводим статистику (Приоритет - FITS, если нет - манифест)
+    lights_cnt = prov.get("lights_count")
+    
+    if lights_cnt is not None:
+        darks_cnt = prov.get("darks_count", 0)
+        biases_cnt = prov.get("biases_count", 0)
+        flats_cnt = prov.get("flats_count", 0)
+        
+        print(f"\nСОСТАВ ИСХОДНЫХ ДАННЫХ (из паспорта FITS)")
+        print(f"  Лайтов:     {lights_cnt}")
+        print(f"  Дарков:     {darks_cnt}")
+        print(f"  Биасов:     {biases_cnt}")
+        print(f"  Флэтов:     {flats_cnt}")
+        
+        total = lights_cnt + darks_cnt + biases_cnt + flats_cnt
+        print(f"  {'Всего:':<12} {total} файлов")
+    elif manifest_path:
         try:
             manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
             cats = manifest_data.get("categories", {})
@@ -98,7 +111,7 @@ def inspect_fits(fits_path: Path) -> int:
                           + cats.get("biases", {}).get("file_count", 0))
             flats_cnt = cats.get("flats", {}).get("file_count", 0)
             
-            print(f"\nСОСТАВ ИСХОДНЫХ ДАННЫХ (из манифеста)")
+            print(f"\nСОСТАВ ИСХОДНЫХ ДАННЫХ (из манифеста, старый формат)")
             print(f"  Лайтов:     {lights_cnt}")
             print(f"  Дарков:     {darks_cnt}")
             print(f"  Биасов:     {biases_cnt}")
@@ -106,20 +119,23 @@ def inspect_fits(fits_path: Path) -> int:
             
             total = lights_cnt + darks_cnt + biases_cnt + flats_cnt
             print(f"  {'Всего:':<12} {total} файлов")
-            
         except Exception as e:
             print(f"\n  [ВНИМАНИЕ] Не удалось прочитать манифест: {e}")
     else:
         print("\nСОСТАВ ИСХОДНЫХ ДАННЫХ")
-        print(f"  [НЕ НАЙДЕН] Манифест с ID {passport_id} отсутствует в папке .astroprov.")
+        print("  [НЕТ ДАННЫХ] В этом FITS-файле нет статистики, и манифест не найден.")
 
     # 6. Выводим информацию о выдержке
-    if exptime is not None:
+    exptime_val = prov.get("exptime")
+    if exptime_val is None:
+        exptime_val = exptime_hdr
+
+    if exptime_val is not None and float(exptime_val) > 0:
         print(f"\nВЫДЕРЖКА")
-        print(f"  Одного кадра:       {exptime} с")
+        print(f"  Одного кадра:       {exptime_val} с")
         
         if stack_count and int(stack_count) > 0:
-            total_exp = float(exptime) * int(stack_count)
+            total_exp = float(exptime_val) * int(stack_count)
             print(f"  Кадров в стеке:     {stack_count}")
             print(f"  Суммарная:          {format_time(total_exp)}")
         else:

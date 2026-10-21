@@ -23,6 +23,13 @@ def write_provenance(fits_path: Path, prov_data: dict) -> None:
         hdu.header["PROVMRKL"] = (str(prov_data.get("merkle_root", "")), "")
         hdu.header["PROVDATE"] = (str(prov_data.get("date", "")), "")
         hdu.header["PROVTOOL"] = (str(prov_data.get("tool", "AstroProv")), "")
+        
+        # НОВЫЕ КЛЮЧИ: Статистика кадров и выдержка
+        hdu.header["PROVLIT"] = (int(prov_data.get("lights_count", 0)), "")
+        hdu.header["PROVDRK"] = (int(prov_data.get("darks_count", 0)), "")
+        hdu.header["PROVBIA"] = (int(prov_data.get("biases_count", 0)), "")
+        hdu.header["PROVFLT"] = (int(prov_data.get("flats_count", 0)), "")
+        hdu.header["PROVEXP"] = (float(prov_data.get("exptime", 0.0)), "")
 
         hdul.append(hdu)
         hdul.flush()
@@ -47,7 +54,13 @@ def read_provenance(fits_path: Path) -> dict | None:
             "merkle_root": header.get("PROVMRKL"),
             "date": header.get("PROVDATE"),
             "tool": header.get("PROVTOOL"),
+            "lights_count": header.get("PROVLIT"),
+            "darks_count": header.get("PROVDRK"),
+            "biases_count": header.get("PROVBIA"),
+            "flats_count": header.get("PROVFLT"),
+            "exptime": header.get("PROVEXP"),
         }
+
 if __name__ == "__main__":
     # Простой тест при запуске файла напрямую
     import sys
