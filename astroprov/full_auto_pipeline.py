@@ -23,7 +23,7 @@ def clean_process_dir(object_dir: Path) -> None:
                 item.unlink()
             elif item.is_dir():
                 shutil.rmtree(item)
-        print("    Process directory cleaned.\n")
+        print("  Process directory cleaned.\n")
 
 
 def analyze_script_calibration(script_path: Path) -> dict:
@@ -59,10 +59,17 @@ def analyze_script_calibration(script_path: Path) -> dict:
     }
 
 
-def run_siril_cli(siril_exe: Path, script_path: Path, work_dir: Path, action_name: str) -> None:
+def run_siril_cli(
+    siril_exe: Path,
+    script_path: Path,
+    work_dir: Path,
+    action_name: str,
+    indent: str = "",
+    prefix: str = "[*] ",
+) -> None:
     """Runs Siril CLI with the given script."""
-    print(f"[*] Running Siril CLI: {action_name}")
-    print(f"    Script: {script_path.name}")
+    print(f"{indent}{prefix}Running Siril CLI: {action_name}")
+    print(f"{indent}  Script: {script_path.name}")
     
     cmd = [
         str(siril_exe),
@@ -84,24 +91,22 @@ def run_siril_cli(siril_exe: Path, script_path: Path, work_dir: Path, action_nam
 
 def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path):
     object_dir = object_dir.resolve()
-    print(f"\n{'='*60}")
-    print(f"ASTROPROV FULL AUTO PIPELINE: {object_dir.name}")
-    print(f"{'='*60}\n")
+    print(f"\nASTROPROV FULL AUTO PIPELINE: {object_dir.name}\n")
 
     # Analyze the script BEFORE starting
     print("[*] Analyzing Siril script...")
     script_calib = analyze_script_calibration(siril_script)
-    print(f"    Darks in script: {'Yes' if script_calib['uses_darks'] else 'No'}")
-    print(f"    Biases in script: {'Yes' if script_calib['uses_biases'] else 'No'}")
-    print(f"    Flats in script: {'Yes' if script_calib['uses_flats'] else 'No'}\n")
+    print(f"  Darks in script: {'Yes' if script_calib['uses_darks'] else 'No'}")
+    print(f"  Biases in script: {'Yes' if script_calib['uses_biases'] else 'No'}")
+    print(f"  Flats in script: {'Yes' if script_calib['uses_flats'] else 'No'}\n")
 
     clean_process_dir(object_dir)
     run_siril_cli(siril_cli_exe, siril_script, object_dir, "Calibration and Alignment")
     print("  Calibration completed.\n")
 
-    print("[2/6] Hashing input data (snapshot)...")
+    print("[2/6] Hashing source data (snapshot)...")
     manifest_path = snapshot.create_manifest(object_dir)
-    print(f"  Manifest created: {manifest_path.name}\n")
+    print()
     
     manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
     passport_id = manifest_data["passport_id"]
@@ -125,7 +130,7 @@ def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: 
 
     print("[3/6] Creating frame mapping...")
     mapping_path = mapping.build_mapping(object_dir)
-    print(f"  Mapping created: {mapping_path.name}\n")
+    print()
 
     print("[4/6] Capturing sequence state (pre-stack)...")
     process_dir = object_dir / "process"
@@ -164,7 +169,7 @@ def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: 
     output_fits_name = f"{seq_name}_stacked"
     
     stack_cmd = f"stack {seq_name} rej 3 3 -nonorm -filter-included -out={output_fits_name}"
-    print(f"[*] Stacking parameters: {stack_cmd}")
+    print(f"  Stacking parameters: {stack_cmd}")
 
     stack_script_content = f"""requires 1.2.0
 cd process
@@ -173,7 +178,10 @@ cd ..
 """
     stack_script_path.write_text(stack_script_content, encoding="utf-8")
 
-    run_siril_cli(siril_cli_exe, stack_script_path, object_dir, "Stacking")
+    run_siril_cli(
+        siril_cli_exe, stack_script_path, object_dir,
+        "Stacking", indent="  ", prefix="",
+    )
     print("  Stacking completed.\n")
 
     if stack_script_path.exists():
@@ -234,10 +242,7 @@ cd ..
         print(f"  ERROR creating post-stack report: {exc}")
         sys.exit(1)
 
-    print("\n" + "="*60)
-    print("FINAL INTEGRITY VERIFICATION")
-    print("="*60 + "\n")
-    
+    print("\nPassport embedded. Starting verification...")
     exit_code = verify.verify_output(str(output_fits), str(proc_report_path))
     
     if exit_code == 0:

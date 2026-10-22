@@ -506,16 +506,17 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
             print(f"[FAIL] {message}")
 
         if verifier.errors:
-            print("\nVERDICT: FAIL — the chain did not pass all checks.")
+            print("\nVERDICT: FAIL — chain verification failed.")
+            print(
+                "One or more integrity, consistency, "
+                "or signature checks failed."
+            )
             return 1
 
+        print("\nVERDICT: PASS — chain verified.")
         print(
-            "\nVERDICT: PASS — files and reports match "
-            "the recorded AstroProv chain."
-        )
-        print(
-            "This confirms the integrity and consistency "
-            "of the artifacts, as well as the validity of the digital signature."
+            "Integrity, consistency, and Ed25519 signature "
+            "are all valid."
         )
         return 0
 
@@ -540,4 +541,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

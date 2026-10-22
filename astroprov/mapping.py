@@ -49,13 +49,13 @@ def build_mapping(object_dir: Path) -> Path:
 
     # --- STEP 1: Create or read the mapping base ---
     if not mapping_path.exists():
-        print("Mapping file not found. Creating from scratch...")
+        print("  Mapping file not found. Creating from scratch...")
         mappings = []
     else:
         mapping_data = json.loads(mapping_path.read_text(encoding="utf-8"))
         mappings = mapping_data.get("mappings", [])
         if not mappings:
-            print("Mapping file is empty. Filling the structure...")
+            print("  Mapping file is empty. Filling the structure...")
 
     if not mappings:
         lights_dir = object_dir / "lights"
@@ -90,9 +90,9 @@ def build_mapping(object_dir: Path) -> Path:
 
     # Instead of failing hard, just warn
     if len(processed_files) != len(mappings):
-        print(f"WARNING: {len(mappings)} originals in the base, "
+        print(f"  WARNING: {len(mappings)} original frames, "
               f"but {len(processed_files)} processed FITS found.")
-        print("Continuing... Some frames may have been rejected by Siril.")
+        print("  Continuing... Some frames may have been rejected by Siril.")
 
     processed_meta = {p: metadata(p) for p in processed_files}
     used = set()
@@ -135,7 +135,7 @@ def build_mapping(object_dir: Path) -> Path:
     if mapping_path.exists():
         backup = mapping_path.with_name("astroprov_frame_mapping.backup.json")
         shutil.copy2(mapping_path, backup)
-        print(f"Backup: {backup}")
+        print(f"  Backup: {backup}")
 
     for item, processed, delta in updates:
         item["processed"]["path"] = processed.relative_to(object_dir).as_posix()
@@ -170,11 +170,11 @@ def main() -> None:
         path = build_mapping(args.object_dir.resolve())
         data = json.loads(path.read_text(encoding="utf-8"))
         
-        print(f"\nMapping updated and saved: {path}")
-        print(f"Total originals: {data['matching_count']}")
-        print(f"Successfully matched: {data['matched_count']}")
-        print(f"Lost (rejected): {data['missing_count']}")
-        print("Source hashes verified.")
+        print(f"\n  Mapping updated and saved: {path}")
+        print(f"  Total originals: {data['matching_count']}")
+        print(f"  Successfully matched: {data['matched_count']}")
+        print(f"  Lost (rejected): {data['missing_count']}")
+        print("  Source hashes verified.")
         
     except (OSError, ValueError, KeyError) as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

@@ -23,7 +23,7 @@ def clean_process_dir(object_dir: Path) -> None:
                 item.unlink()
             elif item.is_dir():
                 shutil.rmtree(item)
-        print("    Process directory cleaned.\n")
+        print("  Process directory cleaned.\n")
 
 
 def analyze_script_calibration(script_path: Path) -> dict:
@@ -59,10 +59,17 @@ def analyze_script_calibration(script_path: Path) -> dict:
     }
 
 
-def run_siril_cli(siril_exe: Path, script_path: Path, work_dir: Path, action_name: str) -> None:
+def run_siril_cli(
+    siril_exe: Path,
+    script_path: Path,
+    work_dir: Path,
+    action_name: str,
+    indent: str = "",
+    prefix: str = "[*] ",
+) -> None:
     """Runs Siril CLI with the given script and prints information about it."""
-    print(f"[*] Running Siril CLI: {action_name}")
-    print(f"    Script: {script_path.name}")
+    print(f"{indent}{prefix}Running Siril CLI: {action_name}")
+    print(f"{indent}  Script: {script_path.name}")
     
     cmd = [
         str(siril_exe),
@@ -84,24 +91,22 @@ def run_siril_cli(siril_exe: Path, script_path: Path, work_dir: Path, action_nam
 
 def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path):
     object_dir = object_dir.resolve()
-    print(f"\n{'='*60}")
-    print(f"ASTROPROV AUTO PIPELINE: {object_dir.name}")
-    print(f"{'='*60}\n")
+    print(f"\nASTROPROV AUTO PIPELINE: {object_dir.name}\n")
 
     # Analyze the script BEFORE starting
     print("[*] Analyzing Siril script...")
     script_calib = analyze_script_calibration(siril_script)
-    print(f"    Darks in script: {'Yes' if script_calib['uses_darks'] else 'No'}")
-    print(f"    Biases in script: {'Yes' if script_calib['uses_biases'] else 'No'}")
-    print(f"    Flats in script: {'Yes' if script_calib['uses_flats'] else 'No'}\n")
+    print(f"  Darks in script: {'Yes' if script_calib['uses_darks'] else 'No'}")
+    print(f"  Biases in script: {'Yes' if script_calib['uses_biases'] else 'No'}")
+    print(f"  Flats in script: {'Yes' if script_calib['uses_flats'] else 'No'}\n")
 
     clean_process_dir(object_dir)
     run_siril_cli(siril_cli_exe, siril_script, object_dir, "Calibration and Alignment")
     print("  Calibration completed.\n")
 
-    print("[2/6] Hashing input data (snapshot)...")
+    print("[2/7] Hashing source data (snapshot)...")
     manifest_path = snapshot.create_manifest(object_dir)
-    print(f"  Manifest created: {manifest_path.name}\n")
+    print()
     
     # Extract statistics from the manifest
     manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -124,23 +129,21 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
             with fits.open(first_lights[0], mode="readonly") as h:
                 exptime = h[0].header.get("EXPTIME", 0.0)
 
-    print("[3/6] Creating frame mapping...")
+    print("[3/7] Creating frame mapping...")
     mapping_path = mapping.build_mapping(object_dir)
-    print(f"  Mapping created: {mapping_path.name}\n")
+    print()
 
-    print("="*60)
     print("STEP 1: MANUAL FRAME SELECTION")
     print("1. Open Siril (GUI) manually.")
-    print(f"2. Navigate to folder: {object_dir.name}")
+    print(f"2. Navigate to folder: {object_dir.name}/process")
     print("3. Open sequence r_pp_light_.seq.")
     print("4. Select good frames (remove clouds, defects).")
     print("5. Save changes and CLOSE SIRIL (important!).")
-    print("="*60)
     
     input("\n>>> When Siril is closed, press ENTER here...")
     print("\nContinuing...\n")
 
-    print("[4/6] Capturing sequence state...")
+    print("[4/7] Capturing sequence state...")
     process_dir = object_dir / "process"
     
     seq_files = list(process_dir.glob("r_*.seq"))
@@ -155,7 +158,7 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
     seq_name = seq_path.stem 
     print(f"  Found .seq: {seq_path.name}\n")
 
-    print("[5/6] Creating pre-stack report...")
+    print("[5/7] Creating pre-stack report...")
     object_dir_runs = object_dir / ".astroprov" / "runs"
     object_dir_runs.mkdir(parents=True, exist_ok=True)
 
@@ -175,15 +178,13 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
         print(f"  ERROR creating pre-stack report: {exc}")
         sys.exit(1)
 
-    print("\n" + "="*60)
-    print("STEP 2: AUTOMATED STACKING")
-    print("="*60)
+    print("\nSTEP 2: AUTOMATED STACKING")
     
     stack_script_path = process_dir / "_stack_temp.ssf"
     output_fits_name = f"{seq_name}_stacked"
     
     stack_cmd = f"stack {seq_name} rej 3 3 -nonorm -filter-included -out={output_fits_name}"
-    print(f"[*] Stacking parameters: {stack_cmd}")
+    print(f"  Stacking parameters: {stack_cmd}")
 
     stack_script_content = f"""requires 1.2.0
 cd process
@@ -192,13 +193,16 @@ cd ..
 """
     stack_script_path.write_text(stack_script_content, encoding="utf-8")
 
-    run_siril_cli(siril_cli_exe, stack_script_path, object_dir, "Stacking")
+    run_siril_cli(
+        siril_cli_exe, stack_script_path, object_dir,
+        "Stacking", indent="  ", prefix="",
+    )
     print("  Stacking completed.\n")
 
     if stack_script_path.exists():
         stack_script_path.unlink()
 
-    print("[6/6] Analyzing stacking results...")
+    print("[6/7] Analyzing stacking results...")
     fits_files = list(process_dir.glob("*.fit"))
     stack_files = [f for f in fits_files if "stacked" in f.stem.lower() or "result" in f.stem.lower()]
     
@@ -255,15 +259,12 @@ cd ..
         fits_prov.write_provenance(output_fits, prov_data)
         
         print(f"  Post-stack report: {proc_report_path.name}")
-        print(f"  ✓ Report signed with Ed25519 (FP: {pubkey_fp})")
+        print(f"  Report signed with Ed25519 (FP: {pubkey_fp})")
     except Exception as exc:
         print(f"  ERROR creating post-stack report: {exc}")
         sys.exit(1)
 
-    print("\n" + "="*60)
-    print("FINAL INTEGRITY VERIFICATION")
-    print("="*60 + "\n")
-    
+    print("\nPassport embedded. Starting verification...")
     exit_code = verify.verify_output(str(output_fits), str(proc_report_path))
     
     if exit_code == 0:
