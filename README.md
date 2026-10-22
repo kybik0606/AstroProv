@@ -4,15 +4,14 @@ AstroProv is a high-performance Python framework designed to guarantee the **int
 
 While protocols like FAIR (Findable, Accessible, Interoperable, Reusable) govern public data archives, there is a critical lack of security during the proprietary/embargo phase. AstroProv fills this gap by embedding a cryptographically signed, self-contained passport directly into the final FITS file.
 
-## 🌟 Key Features
+## Key Features
 
 *   **Integrity (SHA-256 & Merkle Trees):** Calculates cryptographic hashes of all raw frames (lights, darks, biases) and builds a Merkle Tree to create a single, tamper-evident root hash.
-*   **Authenticity (Ed25519 Signatures):** Uses asymmetric cryptography to digitally sign the processing report. This guarantees non-repudiation (proof of who processed the data).
+*   **Authenticity (Ed25519 Signatures):** Uses asymmetric cryptography to digitally sign the processing report and all passport metadata. This guarantees non-repudiation (proof of who processed the data) and prevents tampering with statistics.
 *   **Self-Contained FITS Passport:** Injects a custom `PROVENANCE` HDU (Header/Data Unit) directly into the stacked FITS file. The file carries its own metadata, statistics, and signature, requiring no external JSON files for basic inspection.
-*   **Anti-Tampering:** Instantly detects if pixels, `.seq` sequence files, or JSON reports have been modified, preventing context-swapping and data manipulation.
-*   **Full Automation (Siril CLI):** Orchestrates Siril's command-line interface to automate the entire calibration and stacking process.
+*   **Anti-Tampering:** Instantly detects if pixels, `.seq` sequence files, JSON reports, or passport fields (e.g., frame counts, merkle roots) have been modified, preventing context-swapping and data manipulation.
 
-## 🏗️ Architecture
+## Architecture
 
 AstroProv is built around a chain of trust:
 
@@ -20,7 +19,7 @@ AstroProv is built around a chain of trust:
 2.  **Processing**: Siril calibrates and aligns the frames.
 3.  **Reports**: A JSON manifest links the raw NINA frames to the processed Siril frames.
 4.  **Final Stack**: The `result.fit` file is generated.
-5.  **Sealing**: A digital signature is generated from the JSON report.
+5.  **Sealing**: A digital signature is generated from the JSON report and passport data.
 6.  **Embedding**: The hash, statistics, and signature are baked into the `PROVENANCE` HDU of the FITS file.
 
 ### Core Modules
@@ -33,27 +32,24 @@ AstroProv is built around a chain of trust:
 *   `astroprov/verify.py`: Validates the entire chain of trust (hashes + signature + FITS HDU).
 *   `astroprov/inspect.py`: A human-readable CLI to view the passport inside a FITS file.
 
-## 🚀 Installation
+## Installation
 
 *(Note: PyPI package is coming soon. For now, use a local clone)*
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/yourusername/astroprov.git
-cd astroprov
+git clone https://github.com/kybik0606/astroprov.git
+cd AstroProv
 ```
 
-2. Install the required dependencies:
+2. Create a virtual environment and install the required dependencies:
 ```bash
-pip install astropy cryptography
+python -m venv venv
+venv\Scripts\activate # On Linux use: source venv/bin/activate
+pip install -r requirements.txt
 ```
 
-3. (Optional) Install in editable mode:
-```bash
-pip install -e .
-```
-
-## 💻 Usage
+## Usage
 
 AstroProv provides two main workflows:
 
@@ -71,7 +67,7 @@ This mode pauses after calibration, allowing you to open Siril (GUI), manually r
 python -m astroprov.auto_pipeline M101 --script "siril_scripts/Preprocessing_astroprov.ssf"
 ```
 
-### 🔍 Inspecting and Verifying Data
+### Inspecting and Verifying Data
 
 **View the Passport (Human-Readable):**
 You can inspect the provenance of any processed FITS file without needing the original raw data.
@@ -89,11 +85,23 @@ python -m astroprov.verify "M101/process/r_pp_light__stacked.fit"
 ```
 *Verdict: `PASS` (Data is authentic and unmodified) or `FAIL` (Tampering detected).*
 
-## 🔒 The "Chicken and Egg" Solution
+## Testing
+
+The project includes automated tests for both standard pipeline execution and security (tamper-resistance).
+
+```bash
+# Run end-to-end pipeline tests (4 scenarios)
+python run_all_tests.py
+
+# Run tamper-resistance tests against a generated FITS file (A2)
+python run_security_tests.py "M101/process/r_pp_light__stacked.fit"
+```
+
+## The "Chicken and Egg" Solution
 
 Adding a passport to a FITS file changes the file's physical hash. To solve this, AstroProv uses a **Canonical FITS Hash** (`calculate_fits_data_hash`). It calculates the SHA-256 hash of the image data *while ignoring* the `PROVENANCE` HDU and standard FITS checksums (`EXTEND`, `CHECKSUM`). This allows the passport to be re-signed or updated without invalidating the data hash.
 
-## 📄 License
+## License
 
 This project is licensed under the **GNU General Public License v3.0 (GPL-3.0-or-later)**. 
 
