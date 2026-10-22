@@ -9,9 +9,11 @@ from astropy.io import fits
 from astroprov import fits_prov
 
 
-def find_manifest_by_id(object_dir: Path, passport_id: str) -> Path | None:
+def find_manifest_by_id(object_dir: Path | str, passport_id: str) -> Path | None:
     """Finds the JSON manifest by its ID in the hidden .astroprov folder."""
+    object_dir = Path(object_dir).resolve()
     manifests_dir = object_dir / ".astroprov" / "manifests"
+    
     if not manifests_dir.is_dir():
         return None
 
@@ -38,9 +40,9 @@ def format_time(seconds: float) -> str:
         return f"{secs} s"
 
 
-def inspect_fits(fits_path: Path) -> int:
+def inspect_fits(fits_path: Path | str) -> int:
     """Reads the passport from FITS, finds the manifest and prints a report."""
-    fits_path = fits_path.resolve()
+    fits_path = Path(fits_path).resolve()
     
     print(f"\n{'='*60}")
     print(f"ASTROPROV PASSPORT: {fits_path.name}")
@@ -148,9 +150,10 @@ def inspect_fits(fits_path: Path) -> int:
     return 0
 
 
-def inspect_directory(directory: Path) -> int:
+def inspect_directory(directory: Path | str) -> int:
     """Scans a directory and shows passports of all FITS files in it."""
-    directory = directory.resolve()
+    directory = Path(directory).resolve()
+    
     if not directory.is_dir():
         print(f"ERROR: {directory} is not a directory")
         return 1

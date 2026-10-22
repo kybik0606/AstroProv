@@ -6,8 +6,9 @@ from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
 
-def generate_keys(keys_dir: Path) -> None:
+def generate_keys(keys_dir: Path | str) -> None:
     """Generates a key pair (private and public) if they don't exist yet."""
+    keys_dir = Path(keys_dir).resolve()
     keys_dir.mkdir(parents=True, exist_ok=True)
     
     priv_path = keys_dir / "private_key.pem"
@@ -38,9 +39,11 @@ def generate_keys(keys_dir: Path) -> None:
     print(f"  Generated new Ed25519 keys in {keys_dir}")
 
 
-def get_public_key_fingerprint(keys_dir: Path) -> str:
+def get_public_key_fingerprint(keys_dir: Path | str) -> str:
     """Returns a short SHA-256 fingerprint of the public key."""
+    keys_dir = Path(keys_dir).resolve()
     pub_path = keys_dir / "public_key.pem"
+    
     if not pub_path.exists():
         return "NO_KEY"
     
@@ -49,8 +52,9 @@ def get_public_key_fingerprint(keys_dir: Path) -> str:
     return hashlib.sha256(pub_bytes).hexdigest()[:16]
 
 
-def sign_data(data_bytes: bytes, keys_dir: Path) -> str:
+def sign_data(data_bytes: bytes, keys_dir: Path | str) -> str:
     """Signs data with the private key. Returns the signature as a hex string."""
+    keys_dir = Path(keys_dir).resolve()
     priv_path = keys_dir / "private_key.pem"
     
     if not priv_path.exists():
@@ -65,8 +69,9 @@ def sign_data(data_bytes: bytes, keys_dir: Path) -> str:
     return signature.hex()
 
 
-def verify_signature(data_bytes: bytes, signature_hex: str, keys_dir: Path) -> bool:
+def verify_signature(data_bytes: bytes, signature_hex: str, keys_dir: Path | str) -> bool:
     """Verifies the signature using the public key."""
+    keys_dir = Path(keys_dir).resolve()
     pub_path = keys_dir / "public_key.pem"
     
     if not pub_path.exists():

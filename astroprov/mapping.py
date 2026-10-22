@@ -11,8 +11,9 @@ from pathlib import Path
 from astropy.io import fits
 
 
-def file_hash(path: Path) -> str:
+def file_hash(path: Path | str) -> str:
     """Computes a file's SHA-256 in streaming mode."""
+    path = Path(path)
     h = sha256()
     with path.open("rb") as f:
         for block in iter(lambda: f.read(1024 * 1024), b""):
@@ -20,8 +21,9 @@ def file_hash(path: Path) -> str:
     return h.hexdigest()
 
 
-def metadata(path: Path) -> dict:
+def metadata(path: Path | str) -> dict:
     """Reads metadata from the FITS header for matching."""
+    path = Path(path)
     with fits.open(path, memmap=False) as hdul:
         h = hdul[0].header
         return {
@@ -43,8 +45,9 @@ def same_metadata(a: dict, b: dict) -> bool:
     )
 
 
-def build_mapping(object_dir: Path) -> Path:
+def build_mapping(object_dir: Path | str) -> Path:
     """Creates or updates the mapping file."""
+    object_dir = Path(object_dir).resolve()
     mapping_path = object_dir / "astroprov_frame_mapping.json"
 
     # --- STEP 1: Create or read the mapping base ---
@@ -167,7 +170,7 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        path = build_mapping(args.object_dir.resolve())
+        path = build_mapping(args.object_dir) # Убрали .resolve(), так как он теперь внутри функции
         data = json.loads(path.read_text(encoding="utf-8"))
         
         print(f"\n  Mapping updated and saved: {path}")
