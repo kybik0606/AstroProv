@@ -233,10 +233,24 @@ cd ..
         proc_report_path = object_dir_runs / f"processing-{processing.timestamp_for_filename()}.json"
         processing.save_report(proc_report, proc_report_path)
 
-        # 3. Sign the SHA-256 hash of that JSON report
+        # 3. Sign a canonical JSON payload covering ALL passport fields
         report_bytes = proc_report_path.read_bytes()
         report_hash = hashlib.sha256(report_bytes).hexdigest()
-        sig_hex = signature.sign_data(report_hash.encode('utf-8'), keys_dir)
+
+        sig_payload = {
+            "report_hash": report_hash,
+            "id": passport_id,
+            "merkle_root": merkle_root,
+            "lights_count": int(lights_cnt),
+            "darks_count": int(darks_cnt),
+            "biases_count": int(biases_cnt),
+            "flats_count": int(flats_cnt),
+            "exptime": float(exptime),
+        }
+        sig_bytes = json.dumps(
+            sig_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        sig_hex = signature.sign_data(sig_bytes, keys_dir)
 
         # 4. Build passport with signature
         prov_data = {

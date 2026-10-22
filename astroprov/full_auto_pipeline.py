@@ -217,7 +217,22 @@ cd ..
 
         report_bytes = proc_report_path.read_bytes()
         report_hash = hashlib.sha256(report_bytes).hexdigest()
-        sig_hex = signature.sign_data(report_hash.encode('utf-8'), keys_dir)
+
+        # Sign a canonical JSON payload covering ALL passport fields
+        sig_payload = {
+            "report_hash": report_hash,
+            "id": passport_id,
+            "merkle_root": merkle_root,
+            "lights_count": int(lights_cnt),
+            "darks_count": int(darks_cnt),
+            "biases_count": int(biases_cnt),
+            "flats_count": int(flats_cnt),
+            "exptime": float(exptime),
+        }
+        sig_bytes = json.dumps(
+            sig_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+        ).encode("utf-8")
+        sig_hex = signature.sign_data(sig_bytes, keys_dir)
 
         prov_data = {
             "version": "1.0",
