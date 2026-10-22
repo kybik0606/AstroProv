@@ -110,6 +110,12 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
         fits_report_hash = None
         fits_sig = None
         fits_pubkey_fp = None
+        fits_merkle = None
+        fits_lights = None
+        fits_darks = None
+        fits_biases = None
+        fits_flats = None
+        fits_exptime = None
 
         try:
             with fits.open(output, mode="readonly") as hdul:
@@ -122,6 +128,12 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
                     fits_prov_id = hdr.get("PROVID")
                     fits_report_hash = hdr.get("PROVHASH")
                     fits_pubkey_fp = hdr.get("PROVPUBK")
+                    fits_merkle = hdr.get("PROVMRKL")
+                    fits_lights = hdr.get("PROVLIT")
+                    fits_darks = hdr.get("PROVDRK")
+                    fits_biases = hdr.get("PROVBIA")
+                    fits_flats = hdr.get("PROVFLT")
+                    fits_exptime = hdr.get("PROVEXP")
 
                     # Reassemble the signature from 3 parts
                     sig1 = str(hdr.get("PROVSIG1", ""))
@@ -177,10 +189,25 @@ def verify_output(output_arg: str, report_arg: str | None = None) -> int:
                     "JSON report hash matches the one recorded in FITS"
                 )
 
-            # 2. Verify the signature itself
+            # 2. Verify the signature itself over the canonical payload
             keys_dir = output.parent.parent / ".astroprov" / "keys"
+            
+            sig_payload = {
+                "report_hash": fits_report_hash,
+                "id": fits_prov_id,
+                "merkle_root": fits_merkle,
+                "lights_count": fits_lights,
+                "darks_count": fits_darks,
+                "biases_count": fits_biases,
+                "flats_count": fits_flats,
+                "exptime": fits_exptime,
+            }
+            sig_bytes = json.dumps(
+                sig_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")
+
             is_valid_sig = signature.verify_signature(
-                fits_report_hash.encode('utf-8'),
+                sig_bytes,
                 fits_sig,
                 keys_dir
             )
@@ -541,4 +568,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
