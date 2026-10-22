@@ -12,7 +12,8 @@ from tqdm import tqdm
 from astroprov import signature, fits_prov
 
 
-def sha256_file(path: Path) -> str:
+def sha256_file(path: Path | str) -> str:
+    path = Path(path).resolve()
     digest = hashlib.sha256()
     with path.open("rb") as stream:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
@@ -20,12 +21,14 @@ def sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
-def read_json(path: Path) -> dict:
+def read_json(path: Path | str) -> dict:
+    path = Path(path).resolve()
     with path.open("r", encoding="utf-8-sig") as stream:
         return json.load(stream)
 
 
-def resolve_recorded_path(value: str, base: Path) -> Path:
+def resolve_recorded_path(value: str, base: Path | str) -> Path:
+    base = Path(base).resolve()
     path = Path(value)
     if not path.is_absolute():
         path = base / path
@@ -45,11 +48,12 @@ class Verification:
 
     def check_hash(
         self,
-        path: Path,
+        path: Path | str,
         expected: str,
         label: str,
         quiet: bool = False,
     ) -> bool:
+        path = Path(path).resolve()
         if not path.is_file():
             self.fail(f"{label}: file not found: {path}")
             return False
@@ -64,8 +68,11 @@ class Verification:
         return True
 
 
-def find_processing_report(output: Path, root: Path) -> Path:
+def find_processing_report(output: Path | str, root: Path | str) -> Path:
+    output = Path(output).resolve()
+    root = Path(root).resolve()
     reports_dir = root / ".astroprov" / "runs"
+    
     if not reports_dir.is_dir():
         raise FileNotFoundError(f"Reports directory not found: {reports_dir}")
 
@@ -74,7 +81,7 @@ def find_processing_report(output: Path, root: Path) -> Path:
         try:
             report = read_json(candidate)
             recorded = report.get("output_fits", {}).get("path")
-            if recorded and Path(recorded).resolve() == output.resolve():
+            if recorded and Path(recorded).resolve() == output:
                 matches.append(candidate)
         except (OSError, ValueError, TypeError):
             continue
@@ -85,7 +92,7 @@ def find_processing_report(output: Path, root: Path) -> Path:
     return max(matches, key=lambda p: p.stat().st_mtime)
 
 
-def verify_output(output_arg: str, report_arg: str | None = None) -> int:
+def verify_output(output_arg: str | Path, report_arg: str | Path | None = None) -> int:
     verifier = Verification()
     output = Path(output_arg).resolve()
 

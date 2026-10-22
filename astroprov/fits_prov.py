@@ -6,9 +6,9 @@ from pathlib import Path
 from astropy.io import fits
 
 
-def write_provenance(fits_path: Path, prov_data: dict) -> None:
+def write_provenance(fits_path: Path | str, prov_data: dict) -> None:
     """Adds the passport HDU (PROVENANCE) to the FITS file."""
-    fits_path = fits_path.resolve()
+    fits_path = Path(fits_path).resolve()
 
     if not fits_path.is_file():
         raise FileNotFoundError(f"FITS file not found: {fits_path}")
@@ -47,9 +47,9 @@ def write_provenance(fits_path: Path, prov_data: dict) -> None:
         hdul.flush()
 
 
-def read_provenance(fits_path: Path) -> dict | None:
+def read_provenance(fits_path: Path | str) -> dict | None:
     """Reads the passport from the FITS file."""
-    fits_path = fits_path.resolve()
+    fits_path = Path(fits_path).resolve()
 
     if not fits_path.is_file():
         raise FileNotFoundError(f"FITS file not found: {fits_path}")
@@ -85,12 +85,12 @@ def read_provenance(fits_path: Path) -> dict | None:
         }
 
 
-def calculate_fits_data_hash(fits_path: Path) -> str:
+def calculate_fits_data_hash(fits_path: Path | str) -> str:
     """
     Computes the SHA-256 hash of the FITS file, COMPLETELY IGNORING the 'PROVENANCE' HDU
     and the service headers that change when it is added.
     """
-    fits_path = fits_path.resolve()
+    fits_path = Path(fits_path).resolve()
     if not fits_path.is_file():
         raise FileNotFoundError(f"FITS file not found: {fits_path}")
 
@@ -113,16 +113,15 @@ def calculate_fits_data_hash(fits_path: Path) -> str:
 
 
 if __name__ == "__main__":
-    # Simple test when running the file directly
     import sys
     
     if len(sys.argv) < 2:
         print("Usage: python -m astroprov.fits_prov <path_to_fits>")
         sys.exit(1)
         
-    test_file = Path(sys.argv[1])
+    test_file = sys.argv[1]
     
-    print(f"Reading passport from {test_file.name}...")
+    print(f"Reading passport from {test_file}...")
     try:
         prov = read_provenance(test_file)
         if prov:

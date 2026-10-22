@@ -98,7 +98,7 @@ def run_pipeline(test: dict) -> tuple[bool, str]:
     either the pipeline itself failed or verification failed.
     """
     cmd = [
-        sys.executable, "-m", "astroprov.full_auto_pipeline",
+        sys.executable, "-m", "astroprov.cli.full_auto_pipeline",
         test["object_dir"], "--script", test["script"],
     ]
     print(f"\n$ {' '.join(cmd)}\n")

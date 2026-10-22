@@ -25,9 +25,10 @@ SOURCE_DIRS = (
 )
 
 
-def sha256_file(path: Path) -> str:
+def sha256_file(path: Path | str) -> str:
     """Computes a file's SHA-256 in streaming mode, without loading it fully."""
     digest = hashlib.sha256()
+    path = Path(path)
 
     with path.open("rb") as file:
         while True:
@@ -177,9 +178,12 @@ def snapshot_directory(object_dir: Path) -> dict:
     return categories
 
 
-def create_manifest(object_dir: Path, output: Path | None = None) -> Path:
+def create_manifest(
+    object_dir: Path | str,
+    output: Path | str | None = None,
+) -> Path:
     """Creates a JSON manifest and returns its path."""
-    object_dir = object_dir.resolve()
+    object_dir = Path(object_dir).resolve()
 
     if not object_dir.exists():
         raise FileNotFoundError(
@@ -215,7 +219,7 @@ def create_manifest(object_dir: Path, output: Path | None = None) -> Path:
         )
         output = output_dir / f"{passport_id}.json"
     else:
-        output = output.resolve()
+        output = Path(output).resolve()
         output_dir = output.parent
 
     output_dir.mkdir(parents=True, exist_ok=True)

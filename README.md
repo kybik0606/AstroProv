@@ -31,6 +31,7 @@ AstroProv is built around a chain of trust:
 *   `astroprov/fits_prov.py`: Embeds and reads the `PROVENANCE` HDU, and calculates the canonical data hash.
 *   `astroprov/verify.py`: Validates the entire chain of trust (hashes + signature + FITS HDU).
 *   `astroprov/inspect.py`: A human-readable CLI to view the passport inside a FITS file.
+*   `astroprov/cli/`: Command-line interfaces (orchestrators integrating with Siril).
 
 ## Installation
 
@@ -38,7 +39,7 @@ AstroProv is built around a chain of trust:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/kybik0606/astroprov.git
+git clone https://github.com/kybik0606/AstroProv
 cd AstroProv
 ```
 
@@ -57,14 +58,14 @@ AstroProv provides two main workflows:
 This mode automatically calibrates, stacks all available frames, seals, and verifies the data.
 
 ```bash
-python -m astroprov.full_auto_pipeline M101 --script "siril_scripts/Preprocessing_astroprov.ssf"
+python -m astroprov.cli.full_auto_pipeline M101 --script "siril_scripts/OSC_Preprocessing_AstroProv_WithoutDBF.ssf"
 ```
 
 ### 2. Semi-Auto Pipeline (Manual Quality Control)
 This mode pauses after calibration, allowing you to open Siril (GUI), manually reject bad frames (e.g., clouds, satellites), and then resume stacking.
 
 ```bash
-python -m astroprov.auto_pipeline M101 --script "siril_scripts/Preprocessing_astroprov.ssf"
+python -m astroprov.cli.auto_pipeline M101 --script "siril_scripts/OSC_Preprocessing_AstroProv_WithoutDBF.ssf"
 ```
 
 ### Inspecting and Verifying Data
