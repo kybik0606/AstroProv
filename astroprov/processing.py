@@ -690,8 +690,8 @@ def build_report(
         try:
             manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
             passport_id = manifest_data.get("passport_id")
-        except Exception:
-            pass
+        except (OSError, json.JSONDecodeError) as exc:
+            print(f"  WARNING: Could not read passport_id from manifest: {exc}")
 
     recorded_count = fits_info["stack_count"]
     count_source = "STACKCNT"
