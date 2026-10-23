@@ -1,6 +1,10 @@
+![Version](https://img.shields.io/badge/version-v1.1.0-blue)
+![License](https://img.shields.io/badge/license-GPL--3.0-green)
+![Python](https://img.shields.io/badge/python-3.10%2B-blue)
+
 # AstroProv: Cryptographic Provenance for Astronomical FITS Data
 
-AstroProv is a high-performance Python framework designed to guarantee the **integrity**, **authenticity**, and **provenance** of astronomical data generated through the standard observational pipeline (NINA -> Siril). 
+AstroProv is a lightweight Python framework designed to guarantee the **integrity**, **authenticity**, and **provenance** of astronomical data generated through the standard observational pipeline (NINA -> Siril). 
 
 While protocols like FAIR (Findable, Accessible, Interoperable, Reusable) govern public data archives, there is a critical lack of security during the proprietary/embargo phase. AstroProv fills this gap by embedding a cryptographically signed, self-contained passport directly into the final FITS file.
 
@@ -10,6 +14,7 @@ While protocols like FAIR (Findable, Accessible, Interoperable, Reusable) govern
 *   **Authenticity (Ed25519 Signatures):** Uses asymmetric cryptography to digitally sign the processing report and all passport metadata. This guarantees non-repudiation (proof of who processed the data) and prevents tampering with statistics.
 *   **Self-Contained FITS Passport:** Injects a custom `PROVENANCE` HDU (Header/Data Unit) directly into the stacked FITS file. The file carries its own metadata, statistics, and signature, requiring no external JSON files for basic inspection.
 *   **Anti-Tampering:** Instantly detects if pixels, `.seq` sequence files, JSON reports, or passport fields (e.g., frame counts, merkle roots) have been modified, preventing context-swapping and data manipulation.
+*   **Cross-Platform:** Fully tested on **Windows 10** and **Linux (Debian)**. The framework automatically detects the Siril CLI executable across different operating systems.
 
 ## Architecture
 
@@ -39,20 +44,28 @@ AstroProv is built around a chain of trust:
 
 1. Clone the repository:
 ```bash
-git clone https://github.com/kybik0606/AstroProv
+git clone https://github.com/kybik0606/AstroProv.git
 cd AstroProv
 ```
 
 2. Create a virtual environment and install the required dependencies:
 ```bash
 python -m venv venv
-venv\Scripts\activate # On Linux use: source venv/bin/activate
+
+# On Windows:
+venv\Scripts\activate
+
+# On Linux:
+source venv/bin/activate
+
 pip install -r requirements.txt
 ```
 
 ## Usage
 
 AstroProv provides two main workflows:
+
+> *Note on Siril CLI: By default, the pipeline automatically searches for `siril-cli` in your system `PATH`. If it is installed in a custom location, you can specify it using the `--siril-cli /path/to/siril-cli` argument.*
 
 ### 1. Full Auto Pipeline (No manual intervention)
 This mode automatically calibrates, stacks all available frames, seals, and verifies the data.
@@ -88,7 +101,7 @@ python -m astroprov.verify "M101/process/r_pp_light__stacked.fit"
 
 ## Testing
 
-The project includes automated tests for both standard pipeline execution and security (tamper-resistance).
+The project includes automated tests for both standard pipeline execution and security (tamper-resistance). All tests are verified to pass on both Windows and Linux.
 
 ```bash
 # Run end-to-end pipeline tests (4 scenarios)
@@ -100,7 +113,7 @@ python run_security_tests.py "M101/process/r_pp_light__stacked.fit"
 
 ## The "Chicken and Egg" Solution
 
-Adding a passport to a FITS file changes the file's physical hash. To solve this, AstroProv uses a **Canonical FITS Hash** (`calculate_fits_data_hash`). It calculates the SHA-256 hash of the image data *while ignoring* the `PROVENANCE` HDU and standard FITS checksums (`EXTEND`, `CHECKSUM`). This allows the passport to be re-signed or updated without invalidating the data hash.
+Adding a passport to a FITS file changes the file's physical hash. To solve this, AstroProv uses a **Canonical FITS Data Hash** (`calculate_fits_data_hash`). It calculates the SHA-256 hash of the image data *while ignoring* the `PROVENANCE` HDU and standard FITS checksums (`EXTEND`, `CHECKSUM`). This allows the passport to be re-signed or updated without invalidating the data hash.
 
 ## License
 
@@ -108,6 +121,6 @@ This project is licensed under the **GNU General Public License v3.0 (GPL-3.0-or
 
 ### Acknowledgements
 
-*   The Siril preprocessing script (`siril_scripts/Preprocessing_astroprov.ssf`) is a modified derivative of the original `Preprocessing_WithoutFlat.ssf` (v1.1) created by **Cyril Richard** (C) 2020. 
-*   Modifications were made by Aliaksei Chernik to remove the final stacking command, allowing AstroProv to perform cryptographic verification between calibration and stacking. 
+*   The Siril preprocessing scripts in `siril_scripts/` (e.g., `OSC_Preprocessing_AstroProv_WithoutFlat.ssf`) are modified derivatives of the original Siril scripts (e.g., `OSC_Preprocessing_WithoutFlat.ssf`) created by **Cyril Richard** (C) 2020.
+*   Modifications were made by Aliaksei Chernik. The modified scripts were renamed by adding `AstroProv` to the filenames to distinguish them from the originals. The final stacking command was removed from all scripts to allow AstroProv to perform cryptographic verification between the calibration/alignment and stacking phases.
 *   See the original GPL-3.0 license terms for details.
