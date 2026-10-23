@@ -1,6 +1,7 @@
 """Fully automated pipeline: calibration, selection, stacking and verification."""
 
 import argparse
+import os
 import subprocess
 import sys
 import shutil
@@ -59,6 +60,39 @@ def analyze_script_calibration(script_path: Path) -> dict:
     }
 
 
+def find_siril_cli(cli_arg: Path | str | None) -> Path:
+    """Finds siril-cli executable on Windows and Linux."""
+    # 1. Explicit argument
+    if cli_arg:
+        path = Path(cli_arg)
+        if path.is_file():
+            return path.resolve()
+        print(f"WARNING: Provided siril-cli path not found: {path}")
+
+    # 2. Environment variable
+    env_path = os.environ.get("SIRIL_CLI_PATH")
+    if env_path:
+        path = Path(env_path)
+        if path.is_file():
+            return path.resolve()
+        print(f"WARNING: SIRIL_CLI_PATH set but file not found: {path}")
+
+    # 3. System PATH (works for both Linux and Windows)
+    which_path = shutil.which("siril-cli") or shutil.which("siril-cli.exe")
+    if which_path:
+        return Path(which_path).resolve()
+
+    # 4. Fallback to standard Windows installation path
+    if os.name == "nt":
+        default_win = Path(r"c:\program files\siril\bin\siril-cli.exe")
+        if default_win.is_file():
+            return default_win.resolve()
+
+    print("ERROR: siril-cli not found.")
+    print("Please specify --siril-cli PATH or set the SIRIL_CLI_PATH environment variable.")
+    sys.exit(1)
+
+
 def run_siril_cli(
     siril_exe: Path,
     script_path: Path,
@@ -85,7 +119,7 @@ def run_siril_cli(
             print(result.stderr)
             sys.exit(1)
     except FileNotFoundError:
-        print(f"\n[-] ERROR: siril-cli.exe not found at: {siril_exe}")
+        print(f"\n[-] ERROR: siril-cli not found at: {siril_exe}")
         sys.exit(1)
 
 
@@ -296,8 +330,8 @@ def main():
     parser.add_argument(
         "--siril-cli", 
         type=Path, 
-        default=Path(r"c:\program files\siril\bin\siril-cli.exe"),
-        help="Path to siril-cli.exe"
+        default=None,
+        help="Path to siril-cli. If not provided, uses SIRIL_CLI_PATH or system PATH."
     )
     
     args = parser.parse_args()
@@ -310,7 +344,10 @@ def main():
         print(f"Error: Script {args.script} not found.")
         sys.exit(1)
 
-    run_auto_pipeline(args.object_dir, args.siril_cli, args.script)
+    # Find Siril CLI dynamically
+    siril_exe = find_siril_cli(args.siril_cli)
+    
+    run_auto_pipeline(args.object_dir, siril_exe, args.script)
 
 
 if __name__ == "__main__":
