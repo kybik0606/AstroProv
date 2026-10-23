@@ -41,7 +41,7 @@ TESTS = [
     {
         "name": "SN 2026sqf + WithoutFlat",
         "object_dir": "SN 2026sqf",
-        "script": "siril_scripts/MONO_Preprocessing_AstroProv_WithoutFlat.ssf",
+        "script": "siril_scripts/Mono_Preprocessing_AstroProv_WithoutFlat.ssf",
         "expected_frames": 120,
         "expected_passport": {
             "lights_count": 120,
@@ -53,7 +53,7 @@ TESTS = [
     {
         "name": "SN 2026sqf + WithoutDBF",
         "object_dir": "SN 2026sqf",
-        "script": "siril_scripts/MONO_Preprocessing_AstroProv_WithoutDBF.ssf",
+        "script": "siril_scripts/Mono_Preprocessing_AstroProv_WithoutDBF.ssf",
         "expected_frames": 120,
         "expected_passport": {
             "lights_count": 120,
