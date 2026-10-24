@@ -1,4 +1,4 @@
-![Version](https://img.shields.io/badge/version-v1.1.0-blue)
+![Version](https://img.shields.io/badge/version-v1.2.0-blue)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
@@ -37,6 +37,7 @@ AstroProv is built around a chain of trust:
 *   `astroprov/verify.py`: Validates the entire chain of trust (hashes + signature + FITS HDU).
 *   `astroprov/inspect.py`: A human-readable CLI to view the passport inside a FITS file.
 *   `astroprov/cli/`: Command-line interfaces (orchestrators integrating with Siril).
+*   `astroprov/cli/seal.py`: Standalone tool to seal arbitrary FITS files without Siril.
 
 ## Installation
 
@@ -81,6 +82,15 @@ This mode pauses after calibration, allowing you to open Siril (GUI), manually r
 python -m astroprov.cli.auto_pipeline M101 --script "siril_scripts/OSC_Preprocessing_AstroProv_WithoutDBF.ssf"
 ```
 
+### 3. Standalone Sealing (No Siril required)
+You can cryptographically seal any existing FITS file (e.g., processed in PixInsight or ASTAP) without running the full processing pipeline. The tool automatically detects metadata (like frame counts and exposure) from standard FITS headers.
+
+```bash
+python -m astroprov.cli.seal "path/to/your/image.fits" --object "M31"
+```
+
+If metadata is missing in the FITS header, you can manually override it using `--lights` and `--exptime` arguments.
+
 ### Inspecting and Verifying Data
 
 **View the Passport (Human-Readable):**
@@ -111,6 +121,9 @@ python tests/run_all_tests.py
 
 # Run tamper-resistance tests against a generated FITS file (A2)
 python tests/run_security_tests.py "test_data/M101/process/r_pp_light__stacked.fit"
+
+# You can also run tamper-resistance tests on standalone sealed files
+python tests/run_security_tests.py "test_data/result.fit"
 ```
 
 ## The "Chicken and Egg" Solution

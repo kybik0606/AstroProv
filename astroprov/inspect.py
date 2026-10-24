@@ -136,12 +136,17 @@ def inspect_fits(fits_path: Path | str) -> int:
         print(f"\nEXPOSURE")
         print(f"  Single frame:       {exptime_val} s")
         
-        if stack_count and int(stack_count) > 0:
-            total_exp = float(exptime_val) * int(stack_count)
-            print(f"  Frames in stack:     {stack_count}")
+        # Fallback to lights_cnt from the passport if STACKCNT is missing in the raw FITS header
+        frames_count = stack_count
+        if (not frames_count or int(frames_count) == 0) and lights_cnt:
+            frames_count = lights_cnt
+
+        if frames_count and int(frames_count) > 0:
+            total_exp = float(exptime_val) * int(frames_count)
+            print(f"  Frames in stack:     {frames_count}")
             print(f"  Total:               {format_time(total_exp)}")
         else:
-            print(f"  [NO DATA] FITS header has no STACKCNT or NCOMBINE.")
+            print(f"  [NO DATA] FITS header has no STACKCNT or NCOMBINE, and passport has no Lights count.")
 
     print(f"\n{'='*60}")
     print("Integrity check: use `python -m astroprov.verify`")

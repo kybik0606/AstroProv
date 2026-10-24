@@ -68,30 +68,6 @@ class Verification:
         return True
 
 
-def find_processing_report(output: Path | str, root: Path | str) -> Path:
-    output = Path(output).resolve()
-    root = Path(root).resolve()
-    reports_dir = root / ".astroprov" / "runs"
-    
-    if not reports_dir.is_dir():
-        raise FileNotFoundError(f"Reports directory not found: {reports_dir}")
-
-    matches = []
-    for candidate in reports_dir.glob("processing-*.json"):
-        try:
-            report = read_json(candidate)
-            recorded = report.get("output_fits", {}).get("path")
-            if recorded and Path(recorded).resolve() == output:
-                matches.append(candidate)
-        except (OSError, ValueError, TypeError):
-            continue
-
-    if not matches:
-        raise FileNotFoundError(f"No processing report found for {output}")
-
-    return max(matches, key=lambda p: p.stat().st_mtime)
-
-
 def verify_output(output_arg: str | Path, report_arg: str | Path | None = None) -> int:
     verifier = Verification()
     output = Path(output_arg).resolve()
@@ -104,11 +80,33 @@ def verify_output(output_arg: str | Path, report_arg: str | Path | None = None) 
         return 1
 
     try:
+        # --- FIND REPORT ---
         if report_arg:
             report_path = Path(report_arg).resolve()
         else:
-            root = output.parent.parent
-            report_path = find_processing_report(output, root)
+            report_path = None
+            # Check both pipeline (parent.parent) and standalone (parent) locations
+            for root in (output.parent.parent, output.parent):
+                runs_dir = root / ".astroprov" / "runs"
+                if not runs_dir.is_dir():
+                    continue
+                
+                matches = []
+                for candidate in runs_dir.glob("processing-*.json"):
+                    try:
+                        report = read_json(candidate)
+                        recorded = report.get("output_fits", {}).get("path")
+                        if recorded and Path(recorded).resolve() == output:
+                            matches.append(candidate)
+                    except (OSError, ValueError, TypeError):
+                        continue
+                
+                if matches:
+                    report_path = max(matches, key=lambda p: p.stat().st_mtime)
+                    break
+            
+            if report_path is None:
+                raise FileNotFoundError(f"No processing report found for {output}")
 
         report = read_json(report_path)
 
@@ -155,28 +153,33 @@ def verify_output(output_arg: str | Path, report_arg: str | Path | None = None) 
             verifier.fail(f"Error reading FITS passport: {e}")
 
         # --- SCHEMA AND ID CHECK ---
-        if report.get("schema") != "astroprov-processing-v2":
+        is_standalone = report.get("schema") == "astroprov-standalone-v1"
+
+        if report.get("schema") not in ("astroprov-processing-v2", "astroprov-standalone-v1"):
             verifier.fail("Unknown processing report schema")
-        elif report.get("stage") != "post-stack":
+        elif not is_standalone and report.get("stage") != "post-stack":
             verifier.fail("Report is not for the post-stack stage")
         else:
             verifier.ok("Report type and stage verified")
 
             # Compare passport ID
             report_prov_id = report.get("passport_id")
-            if not report_prov_id:
-                verifier.fail(
-                    "JSON report is missing passport_id for comparison."
-                )
-            elif fits_prov_id != report_prov_id:
-                verifier.fail(
-                    f"Passport ID mismatch! "
-                    f"FITS: {fits_prov_id}, JSON: {report_prov_id}"
-                )
+            if not is_standalone:
+                if not report_prov_id:
+                    verifier.fail(
+                        "JSON report is missing passport_id for comparison."
+                    )
+                elif fits_prov_id != report_prov_id:
+                    verifier.fail(
+                        f"Passport ID mismatch! "
+                        f"FITS: {fits_prov_id}, JSON: {report_prov_id}"
+                    )
+                else:
+                    verifier.ok(
+                        "Passport ID in FITS matches ID in JSON report"
+                    )
             else:
-                verifier.ok(
-                    "Passport ID in FITS matches ID in JSON report"
-                )
+                verifier.ok("Standalone passport verified")
 
         # --- DIGITAL SIGNATURE (ED25519) CHECK ---
         if fits_sig and fits_report_hash:
@@ -197,7 +200,9 @@ def verify_output(output_arg: str | Path, report_arg: str | Path | None = None) 
                 )
 
             # 2. Verify the signature itself over the canonical payload
-            keys_dir = output.parent.parent / ".astroprov" / "keys"
+            keys_dir = output.parent / ".astroprov" / "keys"
+            if not keys_dir.is_dir():
+                keys_dir = output.parent.parent / ".astroprov" / "keys"
             
             sig_payload = {
                 "report_hash": fits_report_hash,
@@ -261,269 +266,271 @@ def verify_output(output_arg: str | Path, report_arg: str | Path | None = None) 
                 "Report is missing the output FITS SHA-256"
             )
 
-        sequence = report.get("sequence", {})
-        sequence_path = Path(sequence.get("path", ""))
-        if not sequence_path.is_absolute():
-            sequence_path = output.parent.parent / sequence_path
+        # Skip pipeline-specific checks if this is a standalone seal
+        if not is_standalone:
+            sequence = report.get("sequence", {})
+            sequence_path = Path(sequence.get("path", ""))
+            if not sequence_path.is_absolute():
+                sequence_path = output.parent.parent / sequence_path
 
-        if sequence.get("sha256"):
-            verifier.check_hash(
-                sequence_path,
-                sequence["sha256"],
-                "Sequence .seq",
-            )
-        else:
-            verifier.fail("Report is missing .seq SHA-256")
+            if sequence.get("sha256"):
+                verifier.check_hash(
+                    sequence_path,
+                    sequence["sha256"],
+                    "Sequence .seq",
+                )
+            else:
+                verifier.fail("Report is missing .seq SHA-256")
 
-        mapping_info = report.get("mapping_file", {})
-        mapping_path_value = mapping_info.get("path")
+            mapping_info = report.get("mapping_file", {})
+            mapping_path_value = mapping_info.get("path")
 
-        if not mapping_path_value:
-            verifier.fail("Report is missing the mapping path")
-            mapping_path = None
-        else:
-            mapping_path = Path(mapping_path_value)
-            if not mapping_path.is_absolute():
-                mapping_path = output.parent.parent / mapping_path
-            mapping_path = mapping_path.resolve()
-            verifier.check_hash(
-                mapping_path,
-                mapping_info.get("sha256", ""),
-                "Mapping",
-            )
+            if not mapping_path_value:
+                verifier.fail("Report is missing the mapping path")
+                mapping_path = None
+            else:
+                mapping_path = Path(mapping_path_value)
+                if not mapping_path.is_absolute():
+                    mapping_path = output.parent.parent / mapping_path
+                mapping_path = mapping_path.resolve()
+                verifier.check_hash(
+                    mapping_path,
+                    mapping_info.get("sha256", ""),
+                    "Mapping",
+                )
 
-        pre_info = report.get("pre_stack_report", {})
-        pre_path_value = pre_info.get("path")
+            pre_info = report.get("pre_stack_report", {})
+            pre_path_value = pre_info.get("path")
 
-        if not pre_path_value:
-            verifier.fail("Pre-stack report is not specified")
-            pre_path = None
-            pre_report = None
-        else:
-            pre_path = Path(pre_path_value)
-            if not pre_path.is_absolute():
-                pre_path = output.parent.parent / pre_path
-            pre_path = pre_path.resolve()
-            verifier.check_hash(
-                pre_path,
-                pre_info.get("sha256", ""),
-                "Pre-stack report",
-            )
+            if not pre_path_value:
+                verifier.fail("Pre-stack report is not specified")
+                pre_path = None
+                pre_report = None
+            else:
+                pre_path = Path(pre_path_value)
+                if not pre_path.is_absolute():
+                    pre_path = output.parent.parent / pre_path
+                pre_path = pre_path.resolve()
+                verifier.check_hash(
+                    pre_path,
+                    pre_info.get("sha256", ""),
+                    "Pre-stack report",
+                )
 
-            try:
-                pre_report = read_json(pre_path)
-                if pre_report.get("schema") != "astroprov-pre-stack-v1":
-                    verifier.fail(
-                        "Unknown pre-stack report schema"
-                    )
+                try:
+                    pre_report = read_json(pre_path)
+                    if pre_report.get("schema") != "astroprov-pre-stack-v1":
+                        verifier.fail(
+                            "Unknown pre-stack report schema"
+                        )
 
-                pre_status = pre_report.get("status")
-                if pre_status not in ("ready", "validation_failed"):
-                    verifier.fail(
-                        "Pre-stack report has "
-                        f"unknown status: {pre_status}"
-                    )
-                elif pre_status == "validation_failed":
-                    verifier.ok(
-                        "Pre-stack report has status "
-                        "validation_failed (expected when frames are rejected)"
-                    )
-
-                pre_seq = pre_report.get("sequence", {})
-                curr_seq = sequence
-
-                if pre_seq.get("sha256") != curr_seq.get("sha256"):
-                    if (
-                        pre_seq.get("selected_indices")
-                        == curr_seq.get("selected_indices")
-                    ):
+                    pre_status = pre_report.get("status")
+                    if pre_status not in ("ready", "validation_failed"):
+                        verifier.fail(
+                            "Pre-stack report has "
+                            f"unknown status: {pre_status}"
+                        )
+                    elif pre_status == "validation_failed":
                         verifier.ok(
-                            ".seq hash changed (Siril stacking), "
-                            "but frame list is the same"
+                            "Pre-stack report has status "
+                            "validation_failed (expected when frames are rejected)"
+                        )
+
+                    pre_seq = pre_report.get("sequence", {})
+                    curr_seq = sequence
+
+                    if pre_seq.get("sha256") != curr_seq.get("sha256"):
+                        if (
+                            pre_seq.get("selected_indices")
+                            == curr_seq.get("selected_indices")
+                        ):
+                            verifier.ok(
+                                ".seq hash changed (Siril stacking), "
+                                "but frame list is the same"
+                            )
+                        else:
+                            verifier.fail(
+                                "Frame list in .seq has changed!"
+                            )
+
+                    if (
+                        pre_report.get("mapping_file", {}).get("sha256")
+                        != mapping_info.get("sha256")
+                    ):
+                        verifier.fail(
+                            "Mapping hash in reports does not match"
+                        )
+
+                    if pre_info.get("verified") is not True:
+                        verifier.fail(
+                            "Pre-stack report is not marked "
+                            "as verified"
                         )
                     else:
-                        verifier.fail(
-                            "Frame list in .seq has changed!"
-                        )
-
-                if (
-                    pre_report.get("mapping_file", {}).get("sha256")
-                    != mapping_info.get("sha256")
-                ):
-                    verifier.fail(
-                        "Mapping hash in reports does not match"
-                    )
-
-                if pre_info.get("verified") is not True:
-                    verifier.fail(
-                        "Pre-stack report is not marked "
-                        "as verified"
-                    )
-                else:
-                    verifier.ok(
-                        "Pre-stack report link verified"
-                    )
-
-            except (OSError, ValueError, TypeError) as exc:
-                verifier.fail(
-                    f"Could not read pre-stack report: {exc}"
-                )
-                pre_report = None
-
-        mapping_data = None
-        if mapping_path is not None and mapping_path.is_file():
-            try:
-                mapping_data = read_json(mapping_path)
-            except (OSError, ValueError, TypeError) as exc:
-                verifier.fail(f"Could not read mapping: {exc}")
-
-        mapping_root = (
-            mapping_path.parent if mapping_path
-            else output.parent.parent
-        )
-
-        if mapping_data is not None:
-            if mapping_data.get("schema") != "astroprov-frame-mapping-v1":
-                verifier.fail("Unknown mapping schema")
-            else:
-                records = mapping_data.get("mappings", [])
-                if not isinstance(records, list) or not records:
-                    verifier.fail("Mapping contains no records")
-                else:
-                    frame_errors_before = len(verifier.errors)
-                    checked_pairs = 0
-
-                    records_with_processed = [
-                        r for r in records
-                        if r.get("processed", {}).get("path")
-                    ]
-                    total_pairs = len(records_with_processed)
-
-                    pbar = tqdm(
-                        total=total_pairs,
-                        bar_format="{desc}",
-                        dynamic_ncols=True,
-                        disable=None,
-                    )
-
-                    for idx, record in enumerate(
-                        records_with_processed, 1
-                    ):
-                        pbar.set_description_str(
-                            f"Frame check: {idx}/{total_pairs}",
-                            refresh=True,
-                        )
-
-                        for key, label in (
-                            ("original", "Original frame"),
-                            ("processed", "Processed frame"),
-                        ):
-                            item = record.get(key, {})
-                            relative_path = item.get("path")
-                            expected_hash = item.get("sha256")
-
-                            if not relative_path or not expected_hash:
-                                verifier.fail(
-                                    "Mapping is missing path or "
-                                    f"SHA-256: {key}"
-                                )
-                                continue
-
-                            frame_path = resolve_recorded_path(
-                                relative_path, mapping_root
-                            )
-                            verifier.check_hash(
-                                frame_path,
-                                expected_hash,
-                                label,
-                                quiet=True,
-                            )
-
-                        checked_pairs += 1
-                        pbar.update(1)
-
-                    if total_pairs > 0:
-                        pbar.set_description_str(
-                            f"Frame check: "
-                            f"{total_pairs}/{total_pairs} done",
-                            refresh=True,
-                        )
-                    pbar.close()
-
-                    if len(verifier.errors) == frame_errors_before:
                         verifier.ok(
-                            "Hashes of all available original and "
-                            "processed frames verified: "
-                            f"{checked_pairs} pairs "
-                            "(missing skipped)"
+                            "Pre-stack report link verified"
                         )
 
-                    if mapping_data.get("matching_count") != len(records):
-                        verifier.fail(
-                            "matching_count does not match "
-                            "mapping record count"
+                except (OSError, ValueError, TypeError) as exc:
+                    verifier.fail(
+                        f"Could not read pre-stack report: {exc}"
+                    )
+                    pre_report = None
+
+            mapping_data = None
+            if mapping_path is not None and mapping_path.is_file():
+                try:
+                    mapping_data = read_json(mapping_path)
+                except (OSError, ValueError, TypeError) as exc:
+                    verifier.fail(f"Could not read mapping: {exc}")
+
+            mapping_root = (
+                mapping_path.parent if mapping_path
+                else output.parent.parent
+            )
+
+            if mapping_data is not None:
+                if mapping_data.get("schema") != "astroprov-frame-mapping-v1":
+                    verifier.fail("Unknown mapping schema")
+                else:
+                    records = mapping_data.get("mappings", [])
+                    if not isinstance(records, list) or not records:
+                        verifier.fail("Mapping contains no records")
+                    else:
+                        frame_errors_before = len(verifier.errors)
+                        checked_pairs = 0
+
+                        records_with_processed = [
+                            r for r in records
+                            if r.get("processed", {}).get("path")
+                        ]
+                        total_pairs = len(records_with_processed)
+
+                        pbar = tqdm(
+                            total=total_pairs,
+                            bar_format="{desc}",
+                            dynamic_ncols=True,
+                            disable=None,
                         )
 
-        cross = report.get("cross_check", {})
-        selected_count = sequence.get("selected_count")
-        excluded_count = sequence.get("excluded_count")
-        total_count = sequence.get("total_frames")
+                        for idx, record in enumerate(
+                            records_with_processed, 1
+                        ):
+                            pbar.set_description_str(
+                                f"Frame check: {idx}/{total_pairs}",
+                                refresh=True,
+                            )
 
-        if selected_count + excluded_count != total_count:
-            verifier.fail(
-                "Selected and excluded frame counts do not add up"
-            )
-        else:
-            verifier.ok(
-                f"Frame selection is consistent: {selected_count} selected, "
-                f"{excluded_count} excluded"
-            )
+                            for key, label in (
+                                ("original", "Original frame"),
+                                ("processed", "Processed frame"),
+                            ):
+                                item = record.get(key, {})
+                                relative_path = item.get("path")
+                                expected_hash = item.get("sha256")
 
-        if cross.get("consistent") is not True:
-            verifier.fail("FITS frame count check failed")
-        elif cross.get("selected_count") != selected_count:
-            verifier.fail(
-                "Selected count in cross_check does not match"
-            )
-        elif cross.get("fits_recorded_count") != selected_count:
-            verifier.fail(
-                "FITS frame count does not match the selection"
-            )
-        else:
-            verifier.ok(
-                f"FITS frame count consistent: {selected_count}"
-            )
+                                if not relative_path or not expected_hash:
+                                    verifier.fail(
+                                        "Mapping is missing path or "
+                                        f"SHA-256: {key}"
+                                    )
+                                    continue
 
-        validation = report.get("mapping_validation", {})
+                                frame_path = resolve_recorded_path(
+                                    relative_path, mapping_root
+                                )
+                                verifier.check_hash(
+                                    frame_path,
+                                    expected_hash,
+                                    label,
+                                    quiet=True,
+                                )
 
-        if validation.get("consistent") is not True:
-            real_errors = [
-                e for e in validation.get("errors", [])
-                if "no mapping entry" not in e
-            ]
-            if real_errors:
+                            checked_pairs += 1
+                            pbar.update(1)
+
+                        if total_pairs > 0:
+                            pbar.set_description_str(
+                                f"Frame check: "
+                                f"{total_pairs}/{total_pairs} done",
+                                refresh=True,
+                            )
+                        pbar.close()
+
+                        if len(verifier.errors) == frame_errors_before:
+                            verifier.ok(
+                                "Hashes of all available original and "
+                                "processed frames verified: "
+                                f"{checked_pairs} pairs "
+                                "(missing skipped)"
+                            )
+
+                        if mapping_data.get("matching_count") != len(records):
+                            verifier.fail(
+                                "matching_count does not match "
+                                "mapping record count"
+                            )
+
+            cross = report.get("cross_check", {})
+            selected_count = sequence.get("selected_count")
+            excluded_count = sequence.get("excluded_count")
+            total_count = sequence.get("total_frames")
+
+            if selected_count + excluded_count != total_count:
                 verifier.fail(
-                    f"Mapping validation failed: {real_errors}"
+                    "Selected and excluded frame counts do not add up"
                 )
             else:
                 verifier.ok(
-                    "Mapping validation: only missing "
-                    "frames (expected)"
+                    f"Frame selection is consistent: {selected_count} selected, "
+                    f"{excluded_count} excluded"
                 )
-        elif validation.get("errors"):
-            verifier.fail("Mapping validation contains errors")
-        elif (
-            validation.get("matched_frame_count") != total_count
-            or validation.get("selected_mapping_count") != selected_count
-            or validation.get("excluded_mapping_count") != excluded_count
-            or validation.get("missing_sequence_indices")
-            or validation.get("extra_mapping_paths")
-        ):
-            verifier.fail(
-                "Mapping frame counts or composition do not match"
-            )
-        else:
-            verifier.ok("Mapping and sequence are consistent")
+
+            if cross.get("consistent") is not True:
+                verifier.fail("FITS frame count check failed")
+            elif cross.get("selected_count") != selected_count:
+                verifier.fail(
+                    "Selected count in cross_check does not match"
+                )
+            elif cross.get("fits_recorded_count") != selected_count:
+                verifier.fail(
+                    "FITS frame count does not match the selection"
+                )
+            else:
+                verifier.ok(
+                    f"FITS frame count consistent: {selected_count}"
+                )
+
+            validation = report.get("mapping_validation", {})
+
+            if validation.get("consistent") is not True:
+                real_errors = [
+                    e for e in validation.get("errors", [])
+                    if "no mapping entry" not in e
+                ]
+                if real_errors:
+                    verifier.fail(
+                        f"Mapping validation failed: {real_errors}"
+                    )
+                else:
+                    verifier.ok(
+                        "Mapping validation: only missing "
+                        "frames (expected)"
+                    )
+            elif validation.get("errors"):
+                verifier.fail("Mapping validation contains errors")
+            elif (
+                validation.get("matched_frame_count") != total_count
+                or validation.get("selected_mapping_count") != selected_count
+                or validation.get("excluded_mapping_count") != excluded_count
+                or validation.get("missing_sequence_indices")
+                or validation.get("extra_mapping_paths")
+            ):
+                verifier.fail(
+                    "Mapping frame counts or composition do not match"
+                )
+            else:
+                verifier.ok("Mapping and sequence are consistent")
 
         if report.get("warnings"):
             print("\n[INFO] Processing report has warnings:")
