@@ -12,6 +12,7 @@ import argparse
 import shutil
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from astropy.io import fits
@@ -139,6 +140,7 @@ def main() -> int:
     print(f"A2 TAMPER-RESISTANCE TESTS: {fits_path.name}")
     print(f"{'='*70}\n")
 
+    start_time = time.perf_counter()
     results = []
 
     for key, label, value in TAMPER_TARGETS:
@@ -159,12 +161,14 @@ def main() -> int:
 
     passed = sum(1 for r in results if r[2])
     total = len(results)
+    
+    duration = time.perf_counter() - start_time
 
     print(f"\n{'='*70}")
     if passed == total:
-        print(f"OVERALL: PASS ({passed}/{total} fields protected)")
+        print(f"OVERALL: PASS ({passed}/{total} fields protected) in {duration:.2f}s")
         return 0
-    print(f"OVERALL: FAIL ({passed}/{total} fields protected)")
+    print(f"OVERALL: FAIL ({passed}/{total} fields protected) in {duration:.2f}s")
     return 1
 
 

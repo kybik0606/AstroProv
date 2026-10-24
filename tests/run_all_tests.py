@@ -4,6 +4,7 @@ import argparse
 import json
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 
@@ -167,6 +168,8 @@ def main() -> int:
     )
     args = parser.parse_args()
 
+    overall_start = time.perf_counter()
+
     tests = TESTS
     if args.only:
         tests = [t for t in TESTS if args.only.lower() in t["name"].lower()]
@@ -183,7 +186,9 @@ def main() -> int:
 
         object_dir = (PROJECT_ROOT / test["object_dir"]).resolve()
 
+        start_time = time.perf_counter()
         pipeline_ok, pipeline_msg = run_pipeline(test)
+        duration = time.perf_counter() - start_time
 
         output_fits = find_output_fits(object_dir)
         if output_fits is None:
@@ -201,6 +206,7 @@ def main() -> int:
         results.append({
             "name": test["name"],
             "ok": test_ok,
+            "duration": duration,
             "details": [
                 # exit code 0 already includes verify.verify_output(),
                 # so a separate verify run would be redundant.
@@ -216,7 +222,7 @@ def main() -> int:
 
     for r in results:
         status = "PASS" if r["ok"] else "FAIL"
-        print(f"  [{status}] {r['name']}")
+        print(f"  [{status}] {r['name']} (took {r['duration']:.2f}s)")
         for name, ok, msg in r["details"]:
             mark = "yes" if ok else "no"
             print(f"           {mark} {name}: {msg}")
@@ -225,11 +231,13 @@ def main() -> int:
     passed = sum(1 for r in results if r["ok"])
     total = len(results)
 
+    overall_duration = time.perf_counter() - overall_start
+
     print(f"{'='*70}")
     if passed == total:
-        print(f"OVERALL: PASS ({passed}/{total} tests)")
+        print(f"OVERALL: PASS ({passed}/{total} tests) in {overall_duration:.2f}s")
         return 0
-    print(f"OVERALL: FAIL ({passed}/{total} tests passed)")
+    print(f"OVERALL: FAIL ({passed}/{total} tests passed) in {overall_duration:.2f}s")
     return 1
 
 
