@@ -17,7 +17,7 @@ from pathlib import Path
 from astropy.io import fits
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Fields in the PROVENANCE HDU and the value type used for mutation.
 # Each tuple: (header_key, label, mutated_value)

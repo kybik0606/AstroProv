@@ -105,10 +105,10 @@ The project includes automated tests for both standard pipeline execution and se
 
 ```bash
 # Run end-to-end pipeline tests (4 scenarios)
-python run_all_tests.py
+python tests/run_all_tests.py
 
 # Run tamper-resistance tests against a generated FITS file (A2)
-python run_security_tests.py "M101/process/r_pp_light__stacked.fit"
+python tests/run_security_tests.py "M101/process/r_pp_light__stacked.fit"
 ```
 
 ## The "Chicken and Egg" Solution

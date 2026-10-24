@@ -6,11 +6,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
+
 from astroprov import fits_prov
-
-
-PROJECT_ROOT = Path(__file__).resolve().parent
-
 
 # Test scenarios. Expected counts are from previous manual runs.
 TESTS = [
