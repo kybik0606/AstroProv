@@ -17,7 +17,7 @@ from astroprov import fits_prov
 TESTS = [
     {
         "name": "M101 + WithoutFlat",
-        "object_dir": "M101",
+        "object_dir": "test_data/M101",
         "script": "siril_scripts/OSC_Preprocessing_AstroProv_WithoutFlat.ssf",
         "expected_frames": 37,
         "expected_passport": {
@@ -29,7 +29,7 @@ TESTS = [
     },
     {
         "name": "M101 + WithoutDBF",
-        "object_dir": "M101",
+        "object_dir": "test_data/M101",
         "script": "siril_scripts/OSC_Preprocessing_AstroProv_WithoutDBF.ssf",
         "expected_frames": 37,
         "expected_passport": {
@@ -41,7 +41,7 @@ TESTS = [
     },
     {
         "name": "SN 2026sqf + WithoutFlat",
-        "object_dir": "SN 2026sqf",
+        "object_dir": "test_data/SN 2026sqf",
         "script": "siril_scripts/Mono_Preprocessing_AstroProv_WithoutFlat.ssf",
         "expected_frames": 120,
         "expected_passport": {
@@ -53,7 +53,7 @@ TESTS = [
     },
     {
         "name": "SN 2026sqf + WithoutDBF",
-        "object_dir": "SN 2026sqf",
+        "object_dir": "test_data/SN 2026sqf",
         "script": "siril_scripts/Mono_Preprocessing_AstroProv_WithoutDBF.ssf",
         "expected_frames": 120,
         "expected_passport": {

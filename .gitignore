@@ -7,9 +7,7 @@ venv/
 .venv/
 
 # Astronomy test data
-M101/
-NGC5906/
-SN 2026sqf/
+test_data/
 
 # IDE
 .vscode/

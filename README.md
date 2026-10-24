@@ -101,14 +101,16 @@ python -m astroprov.verify "M101/process/r_pp_light__stacked.fit"
 
 ## Testing
 
-The project includes automated tests for both standard pipeline execution and security (tamper-resistance). All tests are verified to pass on both Windows and Linux.
+The project includes automated tests for both standard pipeline execution and security (tamper-resistance). Test execution times are benchmarked to help identify performance bottlenecks.
+
+To run the predefined end-to-end tests, place your test object directories inside a `test_data/` folder in the project root (e.g., `test_data/M101`). This folder is ignored by Git to prevent committing large FITS files.
 
 ```bash
-# Run end-to-end pipeline tests (4 scenarios)
+# Run end-to-end pipeline tests (4 scenarios with benchmarking)
 python tests/run_all_tests.py
 
 # Run tamper-resistance tests against a generated FITS file (A2)
-python tests/run_security_tests.py "M101/process/r_pp_light__stacked.fit"
+python tests/run_security_tests.py "test_data/M101/process/r_pp_light__stacked.fit"
 ```
 
 ## The "Chicken and Egg" Solution
