@@ -10,13 +10,15 @@ from pathlib import Path
 
 from astropy.io import fits
 
+CHUNK_SIZE = 1024 * 1024
+
 
 def file_hash(path: Path | str) -> str:
     """Computes a file's SHA-256 in streaming mode."""
     path = Path(path)
     h = sha256()
     with path.open("rb") as f:
-        for block in iter(lambda: f.read(1024 * 1024), b""):
+        for block in iter(lambda: f.read(CHUNK_SIZE), b""):
             h.update(block)
     return h.hexdigest()
 
@@ -26,9 +28,16 @@ def metadata(path: Path | str) -> dict:
     path = Path(path)
     with fits.open(path, memmap=False) as hdul:
         h = hdul[0].header
+        
+        date_obs = h.get("DATE-OBS")
+        exptime = h.get("EXPTIME")
+        
+        if not date_obs or exptime is None:
+            raise ValueError(f"Missing DATE-OBS or EXPTIME in {path.name}")
+
         return {
-            "date": datetime.fromisoformat(str(h["DATE-OBS"]).replace("Z", "+00:00")),
-            "exptime": float(h["EXPTIME"]),
+            "date": datetime.fromisoformat(str(date_obs).replace("Z", "+00:00")),
+            "exptime": float(exptime),
             "object": str(h.get("OBJECT", "")).strip(),
             "instrume": str(h.get("INSTRUME", "")).strip(),
         }
@@ -45,6 +54,13 @@ def same_metadata(a: dict, b: dict) -> bool:
     )
 
 
+def _is_valid_processed_file(path: Path) -> bool:
+    """Checks if a processed file is a valid aligned frame (not a master or stack)."""
+    stem = path.stem.lower()
+    invalid_keywords = ["stacked", "master", "dark", "bias", "flat"]
+    return not any(kw in stem for kw in invalid_keywords)
+
+
 def build_mapping(object_dir: Path | str) -> Path:
     """Creates or updates the mapping file."""
     object_dir = Path(object_dir).resolve()
@@ -55,10 +71,14 @@ def build_mapping(object_dir: Path | str) -> Path:
         print("  Mapping file not found. Creating from scratch...")
         mappings = []
     else:
-        mapping_data = json.loads(mapping_path.read_text(encoding="utf-8"))
-        mappings = mapping_data.get("mappings", [])
-        if not mappings:
-            print("  Mapping file is empty. Filling the structure...")
+        try:
+            mapping_data = json.loads(mapping_path.read_text(encoding="utf-8"))
+            mappings = mapping_data.get("mappings", [])
+            if not mappings:
+                print("  Mapping file is empty. Filling the structure...")
+        except json.JSONDecodeError:
+            print("  ERROR: Mapping file is corrupted. Creating from scratch...")
+            mappings = []
 
     if not mappings:
         lights_dir = object_dir / "lights"
@@ -77,21 +97,9 @@ def build_mapping(object_dir: Path | str) -> Path:
             })
 
     # --- STEP 2: Match with processed files ---
-    # Look for ALL files starting with r_ (aligned),
-    # and exclude the final stack (stacked) and master frames.
     all_processed = (object_dir / "process").glob("r_*.fit")
-    processed_files = sorted(
-        [
-            p for p in all_processed 
-            if "stacked" not in p.stem.lower() 
-            and "master" not in p.stem.lower()
-            and "dark" not in p.stem.lower()
-            and "bias" not in p.stem.lower()
-            and "flat" not in p.stem.lower()
-        ]
-    )
+    processed_files = sorted([p for p in all_processed if _is_valid_processed_file(p)])
 
-    # Instead of failing hard, just warn
     if len(processed_files) != len(mappings):
         print(f"  WARNING: {len(mappings)} original frames, "
               f"but {len(processed_files)} processed FITS found.")
@@ -103,7 +111,12 @@ def build_mapping(object_dir: Path | str) -> Path:
     missing_count = 0
 
     for item in mappings:
-        original = object_dir / item["original"]["path"]
+        original_path = item["original"]["path"]
+        original = (object_dir / original_path).resolve()
+
+        # SECURITY: Prevent path traversal (e.g. "../../etc/passwd")
+        if not original.is_relative_to(object_dir):
+            raise ValueError(f"Original frame path escapes object directory: {original_path}")
 
         actual_original_hash = file_hash(original)
         if actual_original_hash != item["original"]["sha256"]:
@@ -131,7 +144,10 @@ def build_mapping(object_dir: Path | str) -> Path:
 
         processed = matches[0]
         used.add(processed)
-        delta = abs((original_meta["date"] - processed_meta[processed]["date"]).total_seconds())
+        delta = abs(
+            (original_meta["date"] - processed_meta[processed]["date"])
+            .total_seconds()
+        )
         updates.append((item, processed, delta))
 
     # --- STEP 3: Write results ---
@@ -170,7 +186,7 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        path = build_mapping(args.object_dir) # Убрали .resolve(), так как он теперь внутри функции
+        path = build_mapping(args.object_dir)  # resolve() is handled inside the function
         data = json.loads(path.read_text(encoding="utf-8"))
         
         print(f"\n  Mapping updated and saved: {path}")
