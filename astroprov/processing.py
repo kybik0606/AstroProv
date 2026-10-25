@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import re
 import sys
@@ -10,6 +9,7 @@ from pathlib import Path
 
 from astropy.io import fits
 from astroprov import fits_prov
+from astroprov.utils import sha256_file
 
 
 SELECTION_RE = re.compile(r"^\s*I\s+(\d+)\s+([01])\s*$")
@@ -17,17 +17,6 @@ SEQUENCE_RE = re.compile(
     r"""^\s*S\s+['"]([^'"]+)['"]\s+""",
     re.MULTILINE,
 )
-
-
-def sha256_file(path: Path) -> str:
-    """Calculate a file's SHA-256 hash using bounded memory."""
-    digest = hashlib.sha256()
-
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(1024 * 1024), b""):
-            digest.update(chunk)
-
-    return digest.hexdigest()
 
 
 def utc_timestamp() -> str:
@@ -46,9 +35,7 @@ def parse_sequence(path: Path) -> dict:
     sequence_match = SEQUENCE_RE.search(text)
 
     if not sequence_match:
-        raise ValueError(
-            "Could not find the sequence name in the .seq file."
-        )
+        raise ValueError("Could not find the sequence name in the .seq file.")
 
     sequence_name = sequence_match.group(1)
     selection = {}
@@ -61,34 +48,24 @@ def parse_sequence(path: Path) -> dict:
             selected = bool(int(match.group(2)))
 
             if index in selection:
-                raise ValueError(
-                    f"Duplicate frame index in .seq: {index}"
-                )
+                raise ValueError(f"Duplicate frame index in .seq: {index}")
 
             selection[index] = selected
 
     if not selection:
-        raise ValueError(
-            "No frame selection records (I lines) found in .seq."
-        )
+        raise ValueError("No frame selection records (I lines) found in .seq.")
 
     indices = sorted(selection)
     expected = list(range(indices[0], indices[-1] + 1))
 
     if indices != expected:
-        raise ValueError(
-            "Frame indices in .seq are not continuous."
-        )
+        raise ValueError("Frame indices in .seq are not continuous.")
 
     selected_indices = [
-        index
-        for index, selected in sorted(selection.items())
-        if selected
+        index for index, selected in sorted(selection.items()) if selected
     ]
     excluded_indices = [
-        index
-        for index, selected in sorted(selection.items())
-        if not selected
+        index for index, selected in sorted(selection.items()) if not selected
     ]
 
     return {
@@ -117,37 +94,26 @@ def inspect_output_fits(path: Path) -> dict:
             try:
                 history = [str(item) for item in history_value]
             except TypeError:
-                history = (
-                    [str(history_value)] if history_value else []
-                )
+                history = [str(history_value)] if history_value else []
+
+        def _safe_int(key: str) -> int | None:
+            val = header.get(key)
+            if val is None:
+                return None
+            try:
+                return int(val)
+            except (ValueError, TypeError):
+                return None
 
         return {
             "hdu_count": len(hdul),
             "shape": shape,
-            "object": (
-                str(header["OBJECT"])
-                if "OBJECT" in header else None
-            ),
-            "date_obs": (
-                str(header["DATE-OBS"])
-                if "DATE-OBS" in header else None
-            ),
-            "exptime": (
-                float(header["EXPTIME"])
-                if "EXPTIME" in header else None
-            ),
-            "instrument": (
-                str(header["INSTRUME"])
-                if "INSTRUME" in header else None
-            ),
-            "stack_count": (
-                int(header["STACKCNT"])
-                if "STACKCNT" in header else None
-            ),
-            "combine_count": (
-                int(header["NCOMBINE"])
-                if "NCOMBINE" in header else None
-            ),
+            "object": header.get("OBJECT"),
+            "date_obs": header.get("DATE-OBS"),
+            "exptime": float(header["EXPTIME"]) if "EXPTIME" in header else None,
+            "instrument": header.get("INSTRUME"),
+            "stack_count": _safe_int("STACKCNT"),
+            "combine_count": _safe_int("NCOMBINE"),
             "history": history,
         }
 
@@ -167,30 +133,24 @@ def validate_frame_mapping(
     sequence_path = sequence_path.resolve()
     object_dir = sequence_path.parent.parent.resolve()
 
-    data = json.loads(
-        mapping_path.read_text(encoding="utf-8")
-    )
+    data = json.loads(mapping_path.read_text(encoding="utf-8"))
 
     if not isinstance(data, dict):
         raise ValueError("Frame mapping root must be a JSON object.")
 
     if data.get("schema") != "astroprov-frame-mapping-v1":
         raise ValueError(
-            "Unsupported frame mapping schema: "
-            f"{data.get('schema')!r}"
+            f"Unsupported frame mapping schema: {data.get('schema')!r}"
         )
 
     mappings = data.get("mappings")
 
     if not isinstance(mappings, list):
-        raise ValueError(
-            "Mapping field 'mappings' must be a list."
-        )
+        raise ValueError("Mapping field 'mappings' must be a list.")
 
     if data.get("matching_count") != len(mappings):
         raise ValueError(
-            "Mapping matching_count does not match "
-            "the mappings list length."
+            "Mapping matching_count does not match the mappings list length."
         )
 
     by_processed_path = {}
@@ -214,9 +174,7 @@ def validate_frame_mapping(
         key = normalize_relative_path(processed_path)
 
         if key in by_processed_path:
-            raise ValueError(
-                f"Duplicate processed path in mapping: {key}"
-            )
+            raise ValueError(f"Duplicate processed path in mapping: {key}")
 
         by_processed_path[key] = entry
 
@@ -283,22 +241,17 @@ def validate_frame_mapping(
             )
 
             if not record["processed_hash_verified"]:
-                errors.append(
-                    f"Frame {index}: processed SHA-256 mismatch"
-                )
+                errors.append(f"Frame {index}: processed SHA-256 mismatch")
         else:
             errors.append(
-                f"Frame {index}: processed file not found: "
-                f"{processed_file}"
+                f"Frame {index}: processed file not found: {processed_file}"
             )
 
         # Verify original frame hash and prevent path traversal.
         original_path = original.get("path")
 
         if isinstance(original_path, str) and original_path:
-            original_file = (
-                object_dir / Path(original_path)
-            ).resolve()
+            original_file = (object_dir / Path(original_path)).resolve()
 
             try:
                 original_file.relative_to(object_dir)
@@ -319,41 +272,31 @@ def validate_frame_mapping(
                 )
 
                 if not record["original_hash_verified"]:
-                    errors.append(
-                        f"Frame {index}: original SHA-256 mismatch"
-                    )
+                    errors.append(f"Frame {index}: original SHA-256 mismatch")
             elif original_file is not None:
                 errors.append(
-                    f"Frame {index}: original file not found: "
-                    f"{original_file}"
+                    f"Frame {index}: original file not found: {original_file}"
                 )
         else:
-            errors.append(
-                f"Frame {index}: missing original.path"
-            )
+            errors.append(f"Frame {index}: missing original.path")
 
         if selected:
             selected_records.append(record)
         else:
             excluded_records.append(record)
 
-    missing_indices = sorted(
-        set(sequence["selection"]) - matched_indices
-    )
+    missing_indices = sorted(set(sequence["selection"]) - matched_indices)
 
     expected_paths = {
         normalize_relative_path(
-            (
-                sequence_dir
-                / f"{sequence['sequence_name']}{index:05d}.fit"
-            ).relative_to(object_dir).as_posix()
+            (sequence_dir / f"{sequence['sequence_name']}{index:05d}.fit")
+            .relative_to(object_dir)
+            .as_posix()
         )
         for index in sequence["selection"]
     }
 
-    extra_mapping_paths = sorted(
-        set(by_processed_path) - expected_paths
-    )
+    extra_mapping_paths = sorted(set(by_processed_path) - expected_paths)
 
     consistent = (
         not errors
@@ -409,14 +352,10 @@ def build_pre_stack_report(
     mapping_path = mapping_path.resolve()
 
     if not sequence_path.is_file():
-        raise FileNotFoundError(
-            f"Sequence file not found: {sequence_path}"
-        )
+        raise FileNotFoundError(f"Sequence file not found: {sequence_path}")
 
     if not mapping_path.is_file():
-        raise FileNotFoundError(
-            f"Frame mapping not found: {mapping_path}"
-        )
+        raise FileNotFoundError(f"Frame mapping not found: {mapping_path}")
 
     sequence = parse_sequence(sequence_path)
 
@@ -481,11 +420,15 @@ def save_report(report: dict, report_path: Path) -> Path:
     return report_path
 
 
+def _get_report_path(sequence_path: Path, prefix: str) -> Path:
+    """Helper to determine the default report path."""
+    object_dir = sequence_path.resolve().parent.parent
+    return object_dir / ".astroprov" / "runs" / f"{prefix}-{timestamp_for_filename()}.json"
+
+
 def pre_stack_main() -> None:
     parser = argparse.ArgumentParser(
-        description=(
-            "Record and validate Siril frame selection before stacking."
-        )
+        description="Record and validate Siril frame selection before stacking."
     )
     parser.add_argument("sequence", type=Path, help="Siril .seq file")
     parser.add_argument(
@@ -522,13 +465,7 @@ def pre_stack_main() -> None:
         if args.report:
             report_path = args.report
         else:
-            object_dir = args.sequence.resolve().parent.parent
-            report_path = (
-                object_dir
-                / ".astroprov"
-                / "runs"
-                / f"pre-stack-{timestamp_for_filename()}.json"
-            )
+            report_path = _get_report_path(args.sequence, "pre-stack")
 
         report_path = save_report(report, report_path)
 
@@ -545,10 +482,7 @@ def pre_stack_main() -> None:
         f"{report['mapping_validation']['matched_frame_count']}/"
         f"{report['mapping_validation']['sequence_frame_count']}"
     )
-    print(
-        "Mapping consistent: "
-        f"{report['mapping_validation']['consistent']}"
-    )
+    print(f"Mapping consistent: {report['mapping_validation']['consistent']}")
     print(f"Status: {report['status']}")
     print(f"Report SHA-256: {sha256_file(report_path)}")
 
@@ -569,9 +503,7 @@ def validate_pre_stack_report(
     report_path = report_path.resolve()
 
     if not report_path.is_file():
-        raise FileNotFoundError(
-            f"Pre-stack report not found: {report_path}"
-        )
+        raise FileNotFoundError(f"Pre-stack report not found: {report_path}")
 
     data = json.loads(report_path.read_text(encoding="utf-8"))
 
@@ -583,9 +515,7 @@ def validate_pre_stack_report(
 
     status = data.get("status")
     if status not in ("ready", "validation_failed"):
-        raise ValueError(
-            f"Unknown pre-stack report status: {status!r}."
-        )
+        raise ValueError(f"Unknown pre-stack report status: {status!r}.")
 
     pre_sequence = data.get("sequence")
 
@@ -598,15 +528,17 @@ def validate_pre_stack_report(
         # The hash has changed. This may be due to Siril stacking.
         recorded_selected = pre_sequence.get("selected_indices", [])
         current_selected = sequence["selected_indices"]
-        
+
         if recorded_selected != current_selected:
             raise ValueError(
                 "The list of selected frames in .seq has changed "
                 "since the pre-stack report. This is a security violation."
             )
-        
-        print("  [INFO] .seq hash changed (probably due to Siril stacking), "
-              "but the frame list has not changed. Continuing.")
+
+        print(
+            "  [INFO] .seq hash changed (probably due to Siril stacking), "
+            "but the frame list has not changed. Continuing."
+        )
 
     checks = {
         "total_frames": sequence["total_frames"],
@@ -619,9 +551,7 @@ def validate_pre_stack_report(
 
     for field, current_value in checks.items():
         if pre_sequence.get(field) != current_value:
-            raise ValueError(
-                f"Pre-stack sequence field mismatch: {field}"
-            )
+            raise ValueError(f"Pre-stack sequence field mismatch: {field}")
 
     mapping_hash = None
 
@@ -629,9 +559,7 @@ def validate_pre_stack_report(
         mapping_path = mapping_path.resolve()
 
         if not mapping_path.is_file():
-            raise FileNotFoundError(
-                f"Frame mapping not found: {mapping_path}"
-            )
+            raise FileNotFoundError(f"Frame mapping not found: {mapping_path}")
 
         mapping_hash = sha256_file(mapping_path)
         recorded_mapping = data.get("mapping_file")
@@ -672,14 +600,10 @@ def build_report(
     warnings = []
 
     if not sequence_path.is_file():
-        raise FileNotFoundError(
-            f"Sequence file not found: {sequence_path}"
-        )
+        raise FileNotFoundError(f"Sequence file not found: {sequence_path}")
 
     if not output_path.is_file():
-        raise FileNotFoundError(
-            f"Output FITS not found: {output_path}"
-        )
+        raise FileNotFoundError(f"Output FITS not found: {output_path}")
 
     sequence = parse_sequence(sequence_path)
     fits_info = inspect_output_fits(output_path)
@@ -700,21 +624,30 @@ def build_report(
         count_source = "NCOMBINE"
 
     if recorded_count is not None:
-        try:
-            recorded_count = int(recorded_count)
-            if recorded_count != sequence["selected_count"]:
-                warnings.append(f"FITS {count_source}={recorded_count}, but .seq has {sequence['selected_count']} selected frames.")
-        except (TypeError, ValueError):
-            warnings.append(f"Could not interpret FITS {count_source} as an integer.")
+        if recorded_count != sequence["selected_count"]:
+            warnings.append(
+                f"FITS {count_source}={recorded_count}, "
+                f"but .seq has {sequence['selected_count']} selected frames."
+            )
     else:
         count_source = None
-        warnings.append("Output FITS has neither STACKCNT nor NCOMBINE; the stacked frame count could not be cross-checked.")
+        warnings.append(
+            "Output FITS has neither STACKCNT nor NCOMBINE; "
+            "the stacked frame count could not be cross-checked."
+        )
 
     mapping_validation = None
     if mapping_path is not None:
-        mapping_validation = validate_frame_mapping(mapping_path=mapping_path, sequence_path=sequence_path, sequence=sequence)
+        mapping_validation = validate_frame_mapping(
+            mapping_path=mapping_path,
+            sequence_path=sequence_path,
+            sequence=sequence,
+        )
         if not mapping_validation["consistent"]:
-            warnings.append("Frame mapping validation found missing entries, hash mismatches, or other inconsistencies.")
+            warnings.append(
+                "Frame mapping validation found missing entries, "
+                "hash mismatches, or other inconsistencies."
+            )
 
     pre_stack_link = None
     if pre_stack_report_path is not None:
@@ -743,7 +676,7 @@ def build_report(
         },
         "output_fits": {
             "path": str(output_path),
-            # IMPORTANT: Here the pure data hash is used, ignoring the 'PROVENANCE' HDU
+            # IMPORTANT: pure data hash ignoring the 'PROVENANCE' HDU
             "sha256": fits_prov.calculate_fits_data_hash(output_path),
             "size_bytes": output_path.stat().st_size,
             "metadata": fits_info,
@@ -752,7 +685,11 @@ def build_report(
             "selected_count": sequence["selected_count"],
             "fits_count_field": count_source,
             "fits_recorded_count": recorded_count,
-            "consistent": (recorded_count == sequence["selected_count"] if recorded_count is not None else None),
+            "consistent": (
+                recorded_count == sequence["selected_count"]
+                if recorded_count is not None
+                else None
+            ),
         },
         "mapping_file": optional_file_record(mapping_path),
         "mapping_validation": mapping_validation,
@@ -761,9 +698,12 @@ def build_report(
         "stack_command": stack_command,
         "warnings": warnings,
         "limitations": [
-            "A .seq file records selection state but does not independently prove which files Siril actually processed.",
-            "Mapping hash checks compare current files against hashes recorded in the mapping JSON.",
-            "The pre-stack report link verifies matching input hashes and frame selection, but does not prove Siril execution.",
+            "A .seq file records selection state but does not independently "
+            "prove which files Siril actually processed.",
+            "Mapping hash checks compare current files against hashes "
+            "recorded in the mapping JSON.",
+            "The pre-stack report link verifies matching input hashes and "
+            "frame selection, but does not prove Siril execution.",
             "This report is not digitally signed.",
         ],
     }
@@ -816,13 +756,7 @@ def post_stack_main() -> None:
         if args.report:
             report_path = args.report
         else:
-            object_dir = args.sequence.resolve().parent.parent
-            report_path = (
-                object_dir
-                / ".astroprov"
-                / "runs"
-                / f"processing-{timestamp_for_filename()}.json"
-            )
+            report_path = _get_report_path(args.sequence, "processing")
 
         report_path = save_report(report, report_path)
 

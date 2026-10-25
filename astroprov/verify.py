@@ -10,15 +10,7 @@ from astropy.io import fits
 from tqdm import tqdm
 
 from astroprov import signature, fits_prov
-
-
-def sha256_file(path: Path | str) -> str:
-    path = Path(path).resolve()
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+from astroprov.utils import sha256_file
 
 
 def read_json(path: Path | str) -> dict:
@@ -582,4 +574,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    main()

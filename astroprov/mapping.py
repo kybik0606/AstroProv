@@ -5,22 +5,10 @@ import json
 import shutil
 import sys
 from datetime import datetime
-from hashlib import sha256
 from pathlib import Path
 
 from astropy.io import fits
-
-CHUNK_SIZE = 1024 * 1024
-
-
-def file_hash(path: Path | str) -> str:
-    """Computes a file's SHA-256 in streaming mode."""
-    path = Path(path)
-    h = sha256()
-    with path.open("rb") as f:
-        for block in iter(lambda: f.read(CHUNK_SIZE), b""):
-            h.update(block)
-    return h.hexdigest()
+from astroprov.utils import sha256_file
 
 
 def metadata(path: Path | str) -> dict:
@@ -88,7 +76,7 @@ def build_mapping(object_dir: Path | str) -> Path:
             mappings.append({
                 "original": {
                     "path": f.relative_to(object_dir).as_posix(),
-                    "sha256": file_hash(f)
+                    "sha256": sha256_file(f)
                 },
                 "processed": {
                     "path": None,
@@ -118,7 +106,7 @@ def build_mapping(object_dir: Path | str) -> Path:
         if not original.is_relative_to(object_dir):
             raise ValueError(f"Original frame path escapes object directory: {original_path}")
 
-        actual_original_hash = file_hash(original)
+        actual_original_hash = sha256_file(original)
         if actual_original_hash != item["original"]["sha256"]:
             raise ValueError(f"Original frame hash changed: {original}")
 
@@ -158,7 +146,7 @@ def build_mapping(object_dir: Path | str) -> Path:
 
     for item, processed, delta in updates:
         item["processed"]["path"] = processed.relative_to(object_dir).as_posix()
-        item["processed"]["sha256"] = file_hash(processed)
+        item["processed"]["sha256"] = sha256_file(processed)
         item["matching"] = {
             "method": "DATE-OBS within 1 second + EXPTIME + OBJECT + INSTRUME",
             "date_obs_delta_seconds": round(delta, 6),

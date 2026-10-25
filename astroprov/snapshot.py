@@ -9,9 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tqdm import tqdm
+from astroprov.utils import sha256_file
 
-
-CHUNK_SIZE = 1024 * 1024
 
 # Directories containing source frames.
 SOURCE_DIRS = (
@@ -23,18 +22,6 @@ SOURCE_DIRS = (
     "offset",
     "offsets",
 )
-
-
-def sha256_file(path: Path | str) -> str:
-    """Computes a file's SHA-256 in streaming mode, without loading it fully."""
-    digest = hashlib.sha256()
-    path = Path(path)
-
-    with path.open("rb") as file:
-        for chunk in iter(lambda: file.read(CHUNK_SIZE), b""):
-            digest.update(chunk)
-
-    return digest.hexdigest()
 
 
 def merkle_root(files: list[dict]) -> str:
