@@ -8,6 +8,7 @@ from pathlib import Path
 
 def analyze_script_calibration(script_path: Path) -> dict:
     """Read the .ssf script and determine which calibration frames are used."""
+    script_path = Path(script_path)
     text = script_path.read_text(encoding="utf-8", errors="replace")
 
     uses_darks = False

@@ -31,6 +31,7 @@ def timestamp_for_filename() -> str:
 
 def parse_sequence(path: Path) -> dict:
     """Read frame selection from a Siril .seq file."""
+    path = Path(path)
     text = path.read_text(encoding="utf-8", errors="replace")
     sequence_match = SEQUENCE_RE.search(text)
 
