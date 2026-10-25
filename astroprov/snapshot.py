@@ -31,10 +31,7 @@ def sha256_file(path: Path | str) -> str:
     path = Path(path)
 
     with path.open("rb") as file:
-        while True:
-            chunk = file.read(CHUNK_SIZE)
-            if not chunk:
-                break
+        for chunk in iter(lambda: file.read(CHUNK_SIZE), b""):
             digest.update(chunk)
 
     return digest.hexdigest()
@@ -171,8 +168,7 @@ def snapshot_directory(object_dir: Path) -> dict:
 
     if not categories:
         raise ValueError(
-            "No source data directories found: "
-            + ", ".join(SOURCE_DIRS)
+            f"No source data directories found: {', '.join(SOURCE_DIRS)}"
         )
 
     return categories
@@ -214,9 +210,7 @@ def create_manifest(
     }
 
     if output is None:
-        output_dir = (
-            object_dir / ".astroprov" / "manifests"
-        )
+        output_dir = object_dir / ".astroprov" / "manifests"
         output = output_dir / f"{passport_id}.json"
     else:
         output = Path(output).resolve()
