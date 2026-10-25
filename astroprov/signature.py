@@ -2,6 +2,7 @@
 
 import hashlib
 from pathlib import Path
+from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric import ed25519
 from cryptography.hazmat.primitives import serialization
 
@@ -28,6 +29,9 @@ def generate_keys(keys_dir: Path | str) -> None:
             format=serialization.PrivateFormat.PKCS8,
             encryption_algorithm=serialization.NoEncryption()
         ))
+    
+    # SECURITY: Restrict file permissions on Unix-like systems (no-op on Windows)
+    priv_path.chmod(0o600)
 
     # Save the public key
     with open(pub_path, "wb") as f:
@@ -69,7 +73,11 @@ def sign_data(data_bytes: bytes, keys_dir: Path | str) -> str:
     return signature.hex()
 
 
-def verify_signature(data_bytes: bytes, signature_hex: str, keys_dir: Path | str) -> bool:
+def verify_signature(
+    data_bytes: bytes, 
+    signature_hex: str, 
+    keys_dir: Path | str
+) -> bool:
     """Verifies the signature using the public key."""
     keys_dir = Path(keys_dir).resolve()
     pub_path = keys_dir / "public_key.pem"
@@ -83,5 +91,7 @@ def verify_signature(data_bytes: bytes, signature_hex: str, keys_dir: Path | str
     try:
         public_key.verify(bytes.fromhex(signature_hex), data_bytes)
         return True
-    except Exception:
+    except (InvalidSignature, ValueError, TypeError):
+        # InvalidSignature: signature doesn't match
+        # ValueError: signature_hex is not valid hex
         return False
