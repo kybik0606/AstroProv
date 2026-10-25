@@ -1,24 +1,24 @@
 """Fully automated pipeline: calibration, selection, stacking and verification."""
 
 import argparse
-import os
-import subprocess
 import sys
 import shutil
 import json
 import hashlib
 from datetime import datetime, timezone
 from pathlib import Path
+
 from astropy.io import fits
 
 from astroprov import mapping, processing, snapshot, verify, fits_prov, signature
+from astroprov.siril_wrapper import analyze_script_calibration, find_siril_cli, run_siril_cli
 
 
 def clean_process_dir(object_dir: Path) -> None:
-    """Cleans the process directory so Siril starts from scratch."""
+    """Clean the process directory so Siril starts from scratch."""
     process_dir = object_dir / "process"
     if process_dir.exists():
-        print(f"[*] Cleaning process directory from old files...")
+        print("[*] Cleaning process directory from old files...")
         for item in process_dir.iterdir():
             if item.is_file():
                 item.unlink()
@@ -27,107 +27,20 @@ def clean_process_dir(object_dir: Path) -> None:
         print("  Process directory cleaned.\n")
 
 
-def analyze_script_calibration(script_path: Path) -> dict:
-    """
-    Reads the .ssf script and determines which calibration frames are used.
-    This is needed to avoid recording unnecessary data in the passport.
-    """
-    text = script_path.read_text(encoding="utf-8", errors="replace")
-    
-    uses_darks = False
-    uses_biases = False
-    uses_flats = False
-    
-    for line in text.splitlines():
-        line = line.strip()
-        # Skip empty lines and comments
-        if line.startswith("#") or not line:
-            continue
-            
-        # Look for the calibration command
-        if line.startswith("calibrate"):
-            if "-dark=" in line:
-                uses_darks = True
-            if "-bias=" in line:
-                uses_biases = True
-            if "-flat=" in line:
-                uses_flats = True
-                
-    return {
-        "uses_darks": uses_darks,
-        "uses_biases": uses_biases,
-        "uses_flats": uses_flats,
-    }
-
-
-def find_siril_cli(cli_arg: Path | str | None) -> Path:
-    """Finds siril-cli executable on Windows and Linux."""
-    # 1. Explicit argument
-    if cli_arg:
-        path = Path(cli_arg)
-        if path.is_file():
-            return path.resolve()
-        print(f"WARNING: Provided siril-cli path not found: {path}")
-
-    # 2. Environment variable
-    env_path = os.environ.get("SIRIL_CLI_PATH")
-    if env_path:
-        path = Path(env_path)
-        if path.is_file():
-            return path.resolve()
-        print(f"WARNING: SIRIL_CLI_PATH set but file not found: {path}")
-
-    # 3. System PATH (works for both Linux and Windows)
-    which_path = shutil.which("siril-cli") or shutil.which("siril-cli.exe")
-    if which_path:
-        return Path(which_path).resolve()
-
-    # 4. Fallback to standard Windows installation path
-    if os.name == "nt":
-        default_win = Path(r"c:\program files\siril\bin\siril-cli.exe")
-        if default_win.is_file():
-            return default_win.resolve()
-
-    print("ERROR: siril-cli not found.")
-    print("Please specify --siril-cli PATH or set the SIRIL_CLI_PATH environment variable.")
-    sys.exit(1)
-
-
-def run_siril_cli(
-    siril_exe: Path,
-    script_path: Path,
-    work_dir: Path,
-    action_name: str,
-    indent: str = "",
-    prefix: str = "[*] ",
-) -> None:
-    """Runs Siril CLI with the given script and prints information about it."""
-    print(f"{indent}{prefix}Running Siril CLI: {action_name}")
-    print(f"{indent}  Script: {script_path.name}")
-    
-    cmd = [
-        str(siril_exe),
-        "-d", str(work_dir.resolve()),
-        "-s", str(script_path.resolve())
-    ]
-    
+def _safe_exptime(fits_path: Path) -> float:
+    """Safely extract EXPTIME from a FITS header."""
     try:
-        result = subprocess.run(cmd, capture_output=True, text=True, check=False)
-        if result.returncode != 0:
-            print(f"\n[-] SIRIL CLI ERROR during '{action_name}':")
-            print(result.stdout)
-            print(result.stderr)
-            sys.exit(1)
-    except FileNotFoundError:
-        print(f"\n[-] ERROR: siril-cli not found at: {siril_exe}")
-        sys.exit(1)
+        with fits.open(fits_path, mode="readonly") as h:
+            val = h[0].header.get("EXPTIME", 0.0)
+            return float(val)
+    except (OSError, ValueError, TypeError):
+        return 0.0
 
 
-def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path):
+def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path) -> int:
     object_dir = object_dir.resolve()
     print(f"\nASTROPROV AUTO PIPELINE: {object_dir.name}\n")
 
-    # Analyze the script BEFORE starting
     print("[*] Analyzing Siril script...")
     script_calib = analyze_script_calibration(siril_script)
     print(f"  Darks in script: {'Yes' if script_calib['uses_darks'] else 'No'}")
@@ -142,7 +55,6 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
     manifest_path = snapshot.create_manifest(object_dir)
     print()
     
-    # Extract statistics from the manifest
     manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
     passport_id = manifest_data["passport_id"]
     merkle_root = manifest_data["categories"]["lights"]["merkle_root"]
@@ -150,7 +62,6 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
     cats = manifest_data.get("categories", {})
     lights_cnt = cats.get("lights", {}).get("file_count", 0)
     
-    # Smart counting: take files from disk, but zero out those not in the script
     darks_cnt = cats.get("darks", {}).get("file_count", 0) if script_calib["uses_darks"] else 0
     biases_cnt = (cats.get("bias", {}).get("file_count", 0) + cats.get("biases", {}).get("file_count", 0)) if script_calib["uses_biases"] else 0
     flats_cnt = cats.get("flats", {}).get("file_count", 0) if script_calib["uses_flats"] else 0
@@ -160,8 +71,7 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
     if lights_dir.is_dir():
         first_lights = sorted(lights_dir.glob("*.fits"))
         if first_lights:
-            with fits.open(first_lights[0], mode="readonly") as h:
-                exptime = h[0].header.get("EXPTIME", 0.0)
+            exptime = _safe_exptime(first_lights[0])
 
     print("[3/7] Creating frame mapping...")
     mapping_path = mapping.build_mapping(object_dir)
@@ -185,8 +95,7 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
         seq_files = list(process_dir.glob("*.seq"))
         
     if not seq_files:
-        print("  ERROR: .seq files not found in process directory.")
-        sys.exit(1)
+        raise FileNotFoundError("No .seq files found in process directory.")
         
     seq_path = max(seq_files, key=lambda p: p.stat().st_mtime)
     seq_name = seq_path.stem 
@@ -208,9 +117,8 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
         
         if report["status"] == "validation_failed":
             print("  WARNING: Pre-stack report has validation_failed status.")
-    except Exception as exc:
-        print(f"  ERROR creating pre-stack report: {exc}")
-        sys.exit(1)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Failed to create pre-stack report: {exc}") from exc
 
     print("\nSTEP 2: AUTOMATED STACKING")
     
@@ -241,22 +149,18 @@ cd ..
     stack_files = [f for f in fits_files if "stacked" in f.stem.lower() or "result" in f.stem.lower()]
     
     if not stack_files:
-        print("  ERROR: Final FITS file not found.")
-        sys.exit(1)
+        raise FileNotFoundError("Final stacked FITS file not found in process directory.")
     
     output_fits = max(stack_files, key=lambda p: p.stat().st_mtime)
     print(f"  Found final FITS: {output_fits.name}\n")
 
-    # --- STEP 7: SIGNING AND EMBEDDING PASSPORT ---
     print("[7/7] Ed25519 signing, embedding passport and creating post-stack report...")
     try:
         keys_dir = object_dir / ".astroprov" / "keys"
         
-        # 1. Generate/read keys
         signature.generate_keys(keys_dir)
         pubkey_fp = signature.get_public_key_fingerprint(keys_dir)
 
-        # 2. Build the final JSON report (it computes the data hash WITHOUT the passport)
         proc_report = processing.build_report(
             sequence_path=seq_path,
             output_path=output_fits,
@@ -267,7 +171,6 @@ cd ..
         proc_report_path = object_dir_runs / f"processing-{processing.timestamp_for_filename()}.json"
         processing.save_report(proc_report, proc_report_path)
 
-        # 3. Sign a canonical JSON payload covering ALL passport fields
         report_bytes = proc_report_path.read_bytes()
         report_hash = hashlib.sha256(report_bytes).hexdigest()
 
@@ -286,7 +189,6 @@ cd ..
         ).encode("utf-8")
         sig_hex = signature.sign_data(sig_bytes, keys_dir)
 
-        # 4. Build passport with signature
         prov_data = {
             "version": "1.0",
             "id": passport_id,
@@ -303,14 +205,12 @@ cd ..
             "signature": sig_hex
         }
         
-        # 5. Embed passport into FITS
         fits_prov.write_provenance(output_fits, prov_data)
         
         print(f"  Post-stack report: {proc_report_path.name}")
         print(f"  Report signed with Ed25519 (FP: {pubkey_fp})")
-    except Exception as exc:
-        print(f"  ERROR creating post-stack report: {exc}")
-        sys.exit(1)
+    except (OSError, ValueError) as exc:
+        raise RuntimeError(f"Failed to create post-stack report: {exc}") from exc
 
     print("\nPassport embedded. Starting verification...")
     exit_code = verify.verify_output(str(output_fits), str(proc_report_path))
@@ -320,10 +220,10 @@ cd ..
     else:
         print("\nAUTO PIPELINE COMPLETED WITH ERRORS. Check logs above.")
     
-    sys.exit(exit_code)
+    return exit_code
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(description="AstroProv Auto Pipeline.")
     parser.add_argument("object_dir", type=Path, help="Object directory (e.g., NGC5906)")
     parser.add_argument("--script", type=Path, required=True, help="Path to Siril .ssf calibration script")
@@ -338,17 +238,20 @@ def main():
 
     if not args.object_dir.is_dir():
         print(f"Error: {args.object_dir} is not a directory.")
-        sys.exit(1)
+        return 1
         
     if not args.script.is_file():
         print(f"Error: Script {args.script} not found.")
-        sys.exit(1)
+        return 1
 
-    # Find Siril CLI dynamically
-    siril_exe = find_siril_cli(args.siril_cli)
-    
-    run_auto_pipeline(args.object_dir, siril_exe, args.script)
+    try:
+        siril_exe = find_siril_cli(args.siril_cli)
+        exit_code = run_auto_pipeline(args.object_dir, siril_exe, args.script)
+        return exit_code
+    except (OSError, ValueError, RuntimeError) as exc:
+        print(f"\nPIPELINE FAILED: {exc}")
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

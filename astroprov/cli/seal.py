@@ -11,22 +11,37 @@ from astropy.io import fits
 from astroprov import fits_prov, signature
 
 
+def _safe_int(value: object) -> int | None:
+    """Convert a value to int, or return None if impossible."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_float(value: object) -> float | None:
+    """Convert a value to float, or return None if impossible."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def seal_fits(
     fits_path: Path, 
     keys_dir: Path | None, 
     object_name: str,
     manual_lights: int | None = None,
     manual_exptime: float | None = None
-):
+) -> None:
     fits_path = fits_path.resolve()
     
     if not fits_path.is_file():
-        print(f"ERROR: File not found: {fits_path}")
-        sys.exit(1)
+        raise FileNotFoundError(f"File not found: {fits_path}")
 
     print(f"\nSTANDALONE SEALING: {fits_path.name}\n")
 
-    # 1. Resolve keys directory (default: next to the FITS file)
+    # 1. Resolve keys directory
     if keys_dir is None:
         keys_dir = fits_path.parent / ".astroprov" / "keys"
     else:
@@ -43,36 +58,29 @@ def seal_fits(
     with fits.open(fits_path, mode="readonly") as hdul:
         hdr = hdul[0].header
         
-        # --- LIGHTS COUNT (Check various standards) ---
         if manual_lights is not None:
             lights_cnt = manual_lights
             print(f"  Using manual lights count: {lights_cnt}")
-        elif "STACKCNT" in hdr:     # Siril standard
-            lights_cnt = int(hdr["STACKCNT"])
-        elif "NCOMBINE" in hdr:     # Siril alternative
-            lights_cnt = int(hdr["NCOMBINE"])
-        elif "LUM_CNT" in hdr:      # N.I.N.A. standard
-            lights_cnt = int(hdr["LUM_CNT"])
-        elif "NFRAMES" in hdr:      # PixInsight / generic standard
-            lights_cnt = int(hdr["NFRAMES"])
         else:
-            lights_cnt = 0          # Unknown
+            lights_cnt = (
+                _safe_int(hdr.get("STACKCNT")) or
+                _safe_int(hdr.get("NCOMBINE")) or
+                _safe_int(hdr.get("LUM_CNT")) or
+                _safe_int(hdr.get("NFRAMES")) or 0
+            )
 
-        # --- EXPOSURE TIME ---
         if manual_exptime is not None:
             exptime = manual_exptime
             print(f"  Using manual exptime: {exptime}")
-        elif "LUM_EXP" in hdr:      # N.I.N.A. single frame exp
-            exptime = float(hdr["LUM_EXP"])
-        elif "EXPTIME" in hdr:
-            exptime = float(hdr["EXPTIME"])
         else:
-            exptime = 0.0
+            exptime = (
+                _safe_float(hdr.get("LUM_EXP")) or
+                _safe_float(hdr.get("EXPTIME")) or 0.0
+            )
 
-        # --- CALIBRATION COUNTS (Check multiple standards) ---
-        darks_cnt = int(hdr.get("LUM_DARK", hdr.get("DARKCNT", 0)))
-        flats_cnt = int(hdr.get("LUM_FLAT", hdr.get("FLATCNT", 0)))
-        biases_cnt = int(hdr.get("LUM_BIAS", hdr.get("BIASCNT", 0)))
+        darks_cnt = _safe_int(hdr.get("LUM_DARK")) or _safe_int(hdr.get("DARKCNT")) or 0
+        flats_cnt = _safe_int(hdr.get("LUM_FLAT")) or _safe_int(hdr.get("FLATCNT")) or 0
+        biases_cnt = _safe_int(hdr.get("LUM_BIAS")) or _safe_int(hdr.get("BIASCNT")) or 0
 
         print(f"  Auto-detected stats from header:")
         print(f"    Lights: {lights_cnt}, Darks: {darks_cnt}, Flats: {flats_cnt}, Biases: {biases_cnt}")
@@ -142,7 +150,7 @@ def seal_fits(
     print("You can verify this file using: python -m astroprov.verify <file>")
 
 
-def main():
+def main() -> int:
     parser = argparse.ArgumentParser(
         description="Seal an existing FITS file with AstroProv passport (no Siril required)."
     )
@@ -153,8 +161,14 @@ def main():
     parser.add_argument("--exptime", type=float, help="Manually override exposure time in seconds")
     
     args = parser.parse_args()
-    seal_fits(args.fits, args.keys, args.object, args.lights, args.exptime)
+    
+    try:
+        seal_fits(args.fits, args.keys, args.object, args.lights, args.exptime)
+        return 0
+    except (OSError, ValueError, TypeError) as exc:
+        print(f"\nERROR: {exc}", file=sys.stderr)
+        return 1
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

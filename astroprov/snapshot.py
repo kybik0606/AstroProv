@@ -9,9 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from tqdm import tqdm
+from astroprov.utils import sha256_file
 
-
-CHUNK_SIZE = 1024 * 1024
 
 # Directories containing source frames.
 SOURCE_DIRS = (
@@ -23,21 +22,6 @@ SOURCE_DIRS = (
     "offset",
     "offsets",
 )
-
-
-def sha256_file(path: Path | str) -> str:
-    """Computes a file's SHA-256 in streaming mode, without loading it fully."""
-    digest = hashlib.sha256()
-    path = Path(path)
-
-    with path.open("rb") as file:
-        while True:
-            chunk = file.read(CHUNK_SIZE)
-            if not chunk:
-                break
-            digest.update(chunk)
-
-    return digest.hexdigest()
 
 
 def merkle_root(files: list[dict]) -> str:
@@ -171,8 +155,7 @@ def snapshot_directory(object_dir: Path) -> dict:
 
     if not categories:
         raise ValueError(
-            "No source data directories found: "
-            + ", ".join(SOURCE_DIRS)
+            f"No source data directories found: {', '.join(SOURCE_DIRS)}"
         )
 
     return categories
@@ -214,9 +197,7 @@ def create_manifest(
     }
 
     if output is None:
-        output_dir = (
-            object_dir / ".astroprov" / "manifests"
-        )
+        output_dir = object_dir / ".astroprov" / "manifests"
         output = output_dir / f"{passport_id}.json"
     else:
         output = Path(output).resolve()

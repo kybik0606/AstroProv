@@ -9,11 +9,14 @@ from astropy.io import fits
 from astroprov import fits_prov
 
 
+SEP = "=" * 60
+
+
 def find_manifest_by_id(object_dir: Path | str, passport_id: str) -> Path | None:
-    """Finds the JSON manifest by its ID in the hidden .astroprov folder."""
+    """Find the JSON manifest by its ID in the hidden .astroprov folder."""
     object_dir = Path(object_dir).resolve()
     manifests_dir = object_dir / ".astroprov" / "manifests"
-    
+
     if not manifests_dir.is_dir():
         return None
 
@@ -24,14 +27,31 @@ def find_manifest_by_id(object_dir: Path | str, passport_id: str) -> Path | None
     return None
 
 
-def format_time(seconds: float) -> str:
-    """Formats seconds into a readable form (hours, minutes)."""
+def _safe_float(value: object) -> float | None:
+    """Convert a value to float, or return None if impossible."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _safe_int(value: object) -> int | None:
+    """Convert a value to int, or return None if impossible."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def format_time(seconds: float | None) -> str:
+    """Format seconds into a readable form (hours, minutes)."""
     if seconds is None:
         return ""
+
     hours = int(seconds // 3600)
     minutes = int((seconds % 3600) // 60)
     secs = int(seconds % 60)
-    
+
     if hours > 0:
         return f"{hours} h {minutes} min ({int(seconds)} s)"
     elif minutes > 0:
@@ -40,19 +60,35 @@ def format_time(seconds: float) -> str:
         return f"{secs} s"
 
 
+def _print_composition(
+    lights: int,
+    darks: int,
+    biases: int,
+    flats: int,
+    source: str,
+) -> None:
+    """Print the source data composition block."""
+    print(f"\nSOURCE DATA COMPOSITION ({source})")
+    print(f"  Lights:     {lights}")
+    print(f"  Darks:      {darks}")
+    print(f"  Biases:     {biases}")
+    print(f"  Flats:      {flats}")
+    total = lights + darks + biases + flats
+    print(f"  {'Total:':<12} {total} files")
+
+
 def inspect_fits(fits_path: Path | str) -> int:
-    """Reads the passport from FITS, finds the manifest and prints a report."""
+    """Read the passport from FITS, find the manifest and print a report."""
     fits_path = Path(fits_path).resolve()
-    
-    print(f"\n{'='*60}")
+
+    print(f"\n{SEP}")
     print(f"ASTROPROV PASSPORT: {fits_path.name}")
-    print(f"{'='*60}\n")
+    print(f"{SEP}\n")
 
     if not fits_path.is_file():
         print(f"ERROR: file not found: {fits_path}")
         return 1
 
-    # 1. Read the passport from FITS
     prov = fits_prov.read_provenance(fits_path)
 
     if prov is None:
@@ -60,8 +96,7 @@ def inspect_fits(fits_path: Path | str) -> int:
         return 1
 
     passport_id = prov.get("id")
-    
-    # 2. Read the FITS header for exposure info (EXPTIME and STACKCNT)
+
     exptime_hdr = None
     stack_count = None
     try:
@@ -69,109 +104,111 @@ def inspect_fits(fits_path: Path | str) -> int:
             header = hdul[0].header
             exptime_hdr = header.get("EXPTIME")
             stack_count = header.get("STACKCNT") or header.get("NCOMBINE")
-    except Exception as e:
-        print(f"[WARNING] Could not read FITS header: {e}")
+    except (OSError, ValueError, TypeError, KeyError) as exc:
+        print(f"[WARNING] Could not read FITS header: {exc}")
 
-    # 3. Try to find the manifest by ID (for backward compatibility with old files)
-    object_dir = fits_path.parent.parent
-    manifest_path = find_manifest_by_id(object_dir, passport_id) if passport_id else None
+    # Backward compatibility: older layouts have the manifest one level up.
+    manifest_path = None
+    if passport_id:
+        manifest_path = find_manifest_by_id(fits_path.parent.parent, passport_id)
+        if manifest_path is None:
+            manifest_path = find_manifest_by_id(fits_path.parent, passport_id)
 
-    # 4. Print general information
     print("GENERAL INFO")
     print(f"  Passport ID:      {passport_id or '—'}")
     print(f"  Created:          {prov.get('date', '—')}")
     print(f"  Format version:   {prov.get('version', '—')}")
     print(f"  Tool:             {prov.get('tool', '—')}")
 
-    print(f"\nSOURCE DATA MERKLE ROOT (SHA-256)")
+    print("\nSOURCE DATA MERKLE ROOT (SHA-256)")
     print(f"  {prov.get('merkle_root', '—')}")
 
-    # 5. Print statistics (priority: FITS, then manifest)
     lights_cnt = prov.get("lights_count")
-    
+
     if lights_cnt is not None:
-        darks_cnt = prov.get("darks_count", 0)
-        biases_cnt = prov.get("biases_count", 0)
-        flats_cnt = prov.get("flats_count", 0)
-        
-        print(f"\nSOURCE DATA COMPOSITION (from FITS passport)")
-        print(f"  Lights:     {lights_cnt}")
-        print(f"  Darks:      {darks_cnt}")
-        print(f"  Biases:     {biases_cnt}")
-        print(f"  Flats:      {flats_cnt}")
-        
-        total = lights_cnt + darks_cnt + biases_cnt + flats_cnt
-        print(f"  {'Total:':<12} {total} files")
-    elif manifest_path:
+        _print_composition(
+            lights=_safe_int(lights_cnt) or 0,
+            darks=_safe_int(prov.get("darks_count")) or 0,
+            biases=_safe_int(prov.get("biases_count")) or 0,
+            flats=_safe_int(prov.get("flats_count")) or 0,
+            source="from FITS passport",
+        )
+    elif manifest_path is not None:
         try:
             manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
             cats = manifest_data.get("categories", {})
-            
-            lights_cnt = cats.get("lights", {}).get("file_count", 0)
-            darks_cnt = cats.get("darks", {}).get("file_count", 0)
-            biases_cnt = (cats.get("bias", {}).get("file_count", 0) 
-                          + cats.get("biases", {}).get("file_count", 0))
-            flats_cnt = cats.get("flats", {}).get("file_count", 0)
-            
-            print(f"\nSOURCE DATA COMPOSITION (from manifest, legacy format)")
-            print(f"  Lights:     {lights_cnt}")
-            print(f"  Darks:      {darks_cnt}")
-            print(f"  Biases:     {biases_cnt}")
-            print(f"  Flats:      {flats_cnt}")
-            
-            total = lights_cnt + darks_cnt + biases_cnt + flats_cnt
-            print(f"  {'Total:':<12} {total} files")
-        except Exception as e:
-            print(f"\n  [WARNING] Could not read manifest: {e}")
+
+            m_lights = _safe_int(cats.get("lights", {}).get("file_count")) or 0
+            m_darks = _safe_int(cats.get("darks", {}).get("file_count")) or 0
+            m_biases = (
+                (_safe_int(cats.get("bias", {}).get("file_count")) or 0)
+                + (_safe_int(cats.get("biases", {}).get("file_count")) or 0)
+            )
+            m_flats = _safe_int(cats.get("flats", {}).get("file_count")) or 0
+
+            _print_composition(
+                lights=m_lights,
+                darks=m_darks,
+                biases=m_biases,
+                flats=m_flats,
+                source="from manifest, legacy format",
+            )
+            lights_cnt = m_lights
+        except (OSError, ValueError, TypeError, KeyError) as exc:
+            print(f"\n  [WARNING] Could not read manifest: {exc}")
     else:
         print("\nSOURCE DATA COMPOSITION")
         print("  [NO DATA] This FITS has no statistics, and the manifest was not found.")
 
-    # 6. Print exposure info
-    exptime_val = prov.get("exptime")
+    exptime_val = _safe_float(prov.get("exptime"))
     if exptime_val is None:
-        exptime_val = exptime_hdr
+        exptime_val = _safe_float(exptime_hdr)
 
-    if exptime_val is not None and float(exptime_val) > 0:
-        print(f"\nEXPOSURE")
+    if exptime_val is not None and exptime_val > 0:
+        print("\nEXPOSURE")
         print(f"  Single frame:       {exptime_val} s")
-        
-        # Fallback to lights_cnt from the passport if STACKCNT is missing in the raw FITS header
-        frames_count = stack_count
-        if (not frames_count or int(frames_count) == 0) and lights_cnt:
-            frames_count = lights_cnt
 
-        if frames_count and int(frames_count) > 0:
-            total_exp = float(exptime_val) * int(frames_count)
+        frames_count = _safe_int(stack_count)
+        if (not frames_count or frames_count == 0) and lights_cnt:
+            frames_count = _safe_int(lights_cnt)
+
+        if frames_count and frames_count > 0:
+            total_exp = exptime_val * frames_count
             print(f"  Frames in stack:     {frames_count}")
             print(f"  Total:               {format_time(total_exp)}")
         else:
-            print(f"  [NO DATA] FITS header has no STACKCNT or NCOMBINE, and passport has no Lights count.")
+            print(
+                "  [NO DATA] FITS header has no STACKCNT or NCOMBINE, "
+                "and passport has no Lights count."
+            )
+    else:
+        print("\nEXPOSURE")
+        print("  [NO DATA] Could not determine exposure time from FITS header or passport.")
 
-    print(f"\n{'='*60}")
+    print(f"\n{SEP}")
     print("Integrity check: use `python -m astroprov.verify`")
-    print(f"{'='*60}\n")
+    print(f"{SEP}\n")
 
     return 0
 
 
 def inspect_directory(directory: Path | str) -> int:
-    """Scans a directory and shows passports of all FITS files in it."""
+    """Scan a directory and show passports of all FITS files in it."""
     directory = Path(directory).resolve()
-    
+
     if not directory.is_dir():
         print(f"ERROR: {directory} is not a directory")
         return 1
 
     fits_files = sorted(directory.glob("*.fit")) + sorted(directory.glob("*.fits"))
-    
+
     if not fits_files:
         print(f"No FITS files in {directory}.")
         return 1
 
-    print(f"\n{'='*60}")
+    print(f"\n{SEP}")
     print(f"PASSPORT SCAN IN DIRECTORY: {directory}")
-    print(f"{'='*60}\n")
+    print(f"{SEP}\n")
 
     with_passport = 0
     total = 0
@@ -179,7 +216,7 @@ def inspect_directory(directory: Path | str) -> int:
     for f in fits_files:
         total += 1
         prov = fits_prov.read_provenance(f)
-        if prov:
+        if prov is not None:
             with_passport += 1
             print(f"  [PASSPORT] {f.name}")
             print(f"             ID: {prov.get('id')}")
@@ -208,8 +245,7 @@ def main() -> int:
 
     if target.is_file():
         return inspect_fits(target)
-    else:
-        return inspect_directory(target)
+    return inspect_directory(target)
 
 
 if __name__ == "__main__":

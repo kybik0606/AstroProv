@@ -1,3 +1,5 @@
+"""Verify the AstroProv provenance chain for a stacked FITS output."""
+
 from __future__ import annotations
 
 import argparse
@@ -10,29 +12,30 @@ from astropy.io import fits
 from tqdm import tqdm
 
 from astroprov import signature, fits_prov
-
-
-def sha256_file(path: Path | str) -> str:
-    path = Path(path).resolve()
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+from astroprov.utils import sha256_file
 
 
 def read_json(path: Path | str) -> dict:
+    """Read a JSON file, tolerating a UTF-8 BOM."""
     path = Path(path).resolve()
     with path.open("r", encoding="utf-8-sig") as stream:
         return json.load(stream)
 
 
 def resolve_recorded_path(value: str, base: Path | str) -> Path:
+    """Resolve a recorded relative path against base, rejecting traversal."""
     base = Path(base).resolve()
     path = Path(value)
     if not path.is_absolute():
         path = base / path
-    return path.resolve()
+    resolved = path.resolve()
+    try:
+        resolved.relative_to(base)
+    except ValueError as exc:
+        raise ValueError(
+            f"Recorded path escapes the base directory: {value!r}"
+        ) from exc
+    return resolved
 
 
 class Verification:
@@ -53,13 +56,17 @@ class Verification:
         label: str,
         quiet: bool = False,
     ) -> bool:
+        if not isinstance(expected, str) or not expected:
+            self.fail(f"{label}: missing or invalid expected SHA-256")
+            return False
+
         path = Path(path).resolve()
         if not path.is_file():
             self.fail(f"{label}: file not found: {path}")
             return False
 
         actual = sha256_file(path)
-        if actual.lower() != str(expected).lower():
+        if actual.lower() != expected.lower():
             self.fail(f"{label}: SHA-256 does NOT match: {path}")
             return False
 
@@ -68,7 +75,395 @@ class Verification:
         return True
 
 
-def verify_output(output_arg: str | Path, report_arg: str | Path | None = None) -> int:
+def _read_fits_passport(output: Path, verifier: Verification) -> dict:
+    passport: dict = {
+        "id": None,
+        "report_hash": None,
+        "signature": None,
+        "pubkey_fp": None,
+        "merkle_root": None,
+        "lights": None,
+        "darks": None,
+        "biases": None,
+        "flats": None,
+        "exptime": None,
+    }
+
+    try:
+        with fits.open(output, mode="readonly") as hdul:
+            if "PROVENANCE" not in hdul:
+                verifier.fail(
+                    "FITS is missing the passport HDU (PROVENANCE)!"
+                )
+                return passport
+
+            hdr = hdul["PROVENANCE"].header
+            passport["id"] = hdr.get("PROVID")
+            passport["report_hash"] = hdr.get("PROVHASH")
+            passport["pubkey_fp"] = hdr.get("PROVPUBK")
+            passport["merkle_root"] = hdr.get("PROVMRKL")
+            passport["lights"] = hdr.get("PROVLIT")
+            passport["darks"] = hdr.get("PROVDRK")
+            passport["biases"] = hdr.get("PROVBIA")
+            passport["flats"] = hdr.get("PROVFLT")
+            passport["exptime"] = hdr.get("PROVEXP")
+
+            sig1 = str(hdr.get("PROVSIG1", ""))
+            sig2 = str(hdr.get("PROVSIG2", ""))
+            sig3 = str(hdr.get("PROVSIG3", ""))
+            passport["signature"] = (sig1 + sig2 + sig3).strip()
+
+            verifier.ok(f"Passport found in FITS. ID: {passport['id']}")
+    except (OSError, ValueError, TypeError) as exc:
+        verifier.fail(f"Error reading FITS passport: {exc}")
+
+    return passport
+
+
+def _find_report(output: Path) -> Path:
+    for root in (output.parent.parent, output.parent):
+        runs_dir = root / ".astroprov" / "runs"
+        if not runs_dir.is_dir():
+            continue
+
+        matches: list[Path] = []
+        for candidate in runs_dir.glob("processing-*.json"):
+            try:
+                report = read_json(candidate)
+                recorded = report.get("output_fits", {}).get("path")
+                if recorded and Path(recorded).resolve() == output:
+                    matches.append(candidate)
+            except (OSError, ValueError, TypeError):
+                continue
+
+        if matches:
+            return max(matches, key=lambda p: p.stat().st_mtime)
+
+    raise FileNotFoundError(f"No processing report found for {output}")
+
+
+def _verify_signature(
+    output: Path,
+    report_path: Path,
+    passport: dict,
+    verifier: Verification,
+) -> None:
+    fits_sig = passport["signature"]
+    fits_report_hash = passport["report_hash"]
+
+    if not (fits_sig and fits_report_hash):
+        verifier.fail(
+            "Passport is missing digital signature (PROVSIG or PROVHASH)."
+        )
+        return
+
+    current_report_hash = hashlib.sha256(report_path.read_bytes()).hexdigest()
+    if current_report_hash != fits_report_hash:
+        verifier.fail(
+            "JSON report hash does not match the one recorded in FITS "
+            "(report was modified)!"
+        )
+    else:
+        verifier.ok("JSON report hash matches the one recorded in FITS")
+
+    keys_dir = output.parent / ".astroprov" / "keys"
+    if not keys_dir.is_dir():
+        keys_dir = output.parent.parent / ".astroprov" / "keys"
+
+    sig_payload = {
+        "report_hash": fits_report_hash,
+        "id": passport["id"],
+        "merkle_root": passport["merkle_root"],
+        "lights_count": passport["lights"],
+        "darks_count": passport["darks"],
+        "biases_count": passport["biases"],
+        "flats_count": passport["flats"],
+        "exptime": passport["exptime"],
+    }
+    sig_bytes = json.dumps(
+        sig_payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+    if signature.verify_signature(sig_bytes, fits_sig, keys_dir):
+        verifier.ok(
+            f"Ed25519 signature is valid (FP: {passport['pubkey_fp']})"
+        )
+    else:
+        verifier.fail(
+            "Digital signature is INVALID! Signature file does not match "
+            "the key or data was tampered with."
+        )
+
+
+def _verify_mapping_frames(
+    mapping_data: dict,
+    mapping_root: Path,
+    verifier: Verification,
+) -> None:
+    records = mapping_data.get("mappings", [])
+    if not isinstance(records, list) or not records:
+        verifier.fail("Mapping contains no records")
+        return
+
+    frame_errors_before = len(verifier.errors)
+    checked_pairs = 0
+
+    records_with_processed = [
+        r for r in records
+        if isinstance(r, dict) and r.get("processed", {}).get("path")
+    ]
+    total_pairs = len(records_with_processed)
+
+    pbar = tqdm(
+        total=total_pairs,
+        bar_format="{desc}",
+        dynamic_ncols=True,
+        disable=None,
+    )
+
+    for idx, record in enumerate(records_with_processed, 1):
+        pbar.set_description_str(
+            f"Frame check: {idx}/{total_pairs}", refresh=True
+        )
+
+        for key, label in (
+            ("original", "Original frame"),
+            ("processed", "Processed frame"),
+        ):
+            item = record.get(key) or {}
+            if not isinstance(item, dict):
+                verifier.fail(f"{label}: invalid entry")
+                continue
+
+            relative_path = item.get("path")
+            expected_hash = item.get("sha256")
+
+            if not relative_path or not expected_hash:
+                verifier.fail(
+                    f"Mapping is missing path or SHA-256: {key}"
+                )
+                continue
+
+            try:
+                frame_path = resolve_recorded_path(
+                    relative_path, mapping_root
+                )
+            except ValueError as exc:
+                verifier.fail(f"{label}: {exc}")
+                continue
+
+            verifier.check_hash(
+                frame_path, expected_hash, label, quiet=True
+            )
+
+        checked_pairs += 1
+        pbar.update(1)
+
+    if total_pairs > 0:
+        pbar.set_description_str(
+            f"Frame check: {total_pairs}/{total_pairs} done", refresh=True
+        )
+    pbar.close()
+
+    if len(verifier.errors) == frame_errors_before:
+        verifier.ok(
+            f"Hashes of all {checked_pairs} original/processed "
+            "frame pairs verified"
+        )
+
+    recorded_matching = mapping_data.get("matching_count")
+    if recorded_matching != len(records):
+        verifier.fail(
+            f"matching_count ({recorded_matching!r}) does not match "
+            f"mapping record count ({len(records)})"
+        )
+
+
+def _verify_pipeline_artifacts(
+    report: dict,
+    output: Path,
+    verifier: Verification,
+) -> None:
+    sequence = report.get("sequence") or {}
+    if not isinstance(sequence, dict):
+        verifier.fail("Report has invalid sequence section")
+        sequence = {}
+
+    sequence_path = Path(sequence.get("path", ""))
+    if not sequence_path.is_absolute():
+        sequence_path = output.parent.parent / sequence_path
+
+    if sequence.get("sha256"):
+        verifier.check_hash(
+            sequence_path, sequence["sha256"], "Sequence .seq"
+        )
+    else:
+        verifier.fail("Report is missing .seq SHA-256")
+
+    mapping_info = report.get("mapping_file") or {}
+    if not isinstance(mapping_info, dict):
+        verifier.fail("Report has invalid mapping_file section")
+        mapping_info = {}
+
+    mapping_path: Path | None = None
+    mapping_path_value = mapping_info.get("path")
+    if not mapping_path_value:
+        verifier.fail("Report is missing the mapping path")
+    else:
+        mapping_path = Path(mapping_path_value)
+        if not mapping_path.is_absolute():
+            mapping_path = output.parent.parent / mapping_path
+        mapping_path = mapping_path.resolve()
+        verifier.check_hash(
+            mapping_path, mapping_info.get("sha256", ""), "Mapping"
+        )
+
+    pre_info = report.get("pre_stack_report") or {}
+    if not isinstance(pre_info, dict):
+        verifier.fail("Report has invalid pre_stack_report section")
+        pre_info = {}
+
+    pre_path_value = pre_info.get("path")
+    if not pre_path_value:
+        verifier.fail("Pre-stack report is not specified")
+    else:
+        pre_path = Path(pre_path_value)
+        if not pre_path.is_absolute():
+            pre_path = output.parent.parent / pre_path
+        pre_path = pre_path.resolve()
+        verifier.check_hash(
+            pre_path, pre_info.get("sha256", ""), "Pre-stack report"
+        )
+
+        try:
+            pre_report = read_json(pre_path)
+            if pre_report.get("schema") != "astroprov-pre-stack-v1":
+                verifier.fail("Unknown pre-stack report schema")
+
+            pre_status = pre_report.get("status")
+            if pre_status not in ("ready", "validation_failed"):
+                verifier.fail(
+                    f"Pre-stack report has unknown status: {pre_status}"
+                )
+            elif pre_status == "validation_failed":
+                verifier.ok(
+                    "Pre-stack report has status validation_failed "
+                    "(expected when frames are rejected)"
+                )
+
+            pre_seq = pre_report.get("sequence") or {}
+            if pre_seq.get("sha256") != sequence.get("sha256"):
+                if pre_seq.get("selected_indices") == sequence.get(
+                    "selected_indices"
+                ):
+                    verifier.ok(
+                        ".seq hash changed (Siril stacking), but frame "
+                        "list is the same"
+                    )
+                else:
+                    verifier.fail("Frame list in .seq has changed!")
+
+            pre_mapping = pre_report.get("mapping_file") or {}
+            if pre_mapping.get("sha256") != mapping_info.get("sha256"):
+                verifier.fail("Mapping hash in reports does not match")
+
+            if pre_info.get("verified") is not True:
+                verifier.fail("Pre-stack report is not marked as verified")
+            else:
+                verifier.ok("Pre-stack report link verified")
+        except (OSError, ValueError, TypeError) as exc:
+            verifier.fail(f"Could not read pre-stack report: {exc}")
+
+    mapping_data = None
+    if mapping_path is not None and mapping_path.is_file():
+        try:
+            mapping_data = read_json(mapping_path)
+        except (OSError, ValueError, TypeError) as exc:
+            verifier.fail(f"Could not read mapping: {exc}")
+
+    mapping_root = (
+        mapping_path.parent if mapping_path else output.parent.parent
+    )
+
+    if mapping_data is not None:
+        if mapping_data.get("schema") != "astroprov-frame-mapping-v1":
+            verifier.fail("Unknown mapping schema")
+        else:
+            _verify_mapping_frames(mapping_data, mapping_root, verifier)
+
+    cross = report.get("cross_check") or {}
+    if not isinstance(cross, dict):
+        verifier.fail("Report has invalid cross_check section")
+        cross = {}
+
+    selected_count = sequence.get("selected_count")
+    excluded_count = sequence.get("excluded_count")
+    total_count = sequence.get("total_frames")
+
+    if not all(
+        isinstance(v, int)
+        for v in (selected_count, excluded_count, total_count)
+    ):
+        verifier.fail(
+            "Frame counts in report are missing or not integers"
+        )
+    elif selected_count + excluded_count != total_count:
+        verifier.fail("Selected and excluded frame counts do not add up")
+    else:
+        verifier.ok(
+            f"Frame selection is consistent: {selected_count} selected, "
+            f"{excluded_count} excluded"
+        )
+
+    if cross.get("consistent") is not True:
+        verifier.fail("FITS frame count check failed")
+    elif cross.get("selected_count") != selected_count:
+        verifier.fail("Selected count in cross_check does not match")
+    elif cross.get("fits_recorded_count") != selected_count:
+        verifier.fail("FITS frame count does not match the selection")
+    else:
+        verifier.ok(f"FITS frame count consistent: {selected_count}")
+
+    validation = report.get("mapping_validation") or {}
+    if not isinstance(validation, dict):
+        verifier.fail("Report has invalid mapping_validation section")
+        validation = {}
+
+    if validation.get("consistent") is not True:
+        real_errors = [
+            e for e in validation.get("errors", [])
+            if "no mapping entry" not in e
+        ]
+        if real_errors:
+            verifier.fail(f"Mapping validation failed: {real_errors}")
+        else:
+            verifier.ok(
+                "Mapping validation: only missing frames (expected)"
+            )
+    elif validation.get("errors"):
+        verifier.fail("Mapping validation contains errors")
+    elif (
+        validation.get("matched_frame_count") != total_count
+        or validation.get("selected_mapping_count") != selected_count
+        or validation.get("excluded_mapping_count") != excluded_count
+        or validation.get("missing_sequence_indices")
+        or validation.get("extra_mapping_paths")
+    ):
+        verifier.fail(
+            "Mapping frame counts or composition do not match"
+        )
+    else:
+        verifier.ok("Mapping and sequence are consistent")
+
+
+def verify_output(
+    output_arg: str | Path,
+    report_arg: str | Path | None = None,
+) -> int:
+    """Verify the full provenance chain for a stacked output FITS."""
     verifier = Verification()
     output = Path(output_arg).resolve()
 
@@ -80,99 +475,38 @@ def verify_output(output_arg: str | Path, report_arg: str | Path | None = None) 
         return 1
 
     try:
-        # --- FIND REPORT ---
         if report_arg:
             report_path = Path(report_arg).resolve()
         else:
-            report_path = None
-            # Check both pipeline (parent.parent) and standalone (parent) locations
-            for root in (output.parent.parent, output.parent):
-                runs_dir = root / ".astroprov" / "runs"
-                if not runs_dir.is_dir():
-                    continue
-                
-                matches = []
-                for candidate in runs_dir.glob("processing-*.json"):
-                    try:
-                        report = read_json(candidate)
-                        recorded = report.get("output_fits", {}).get("path")
-                        if recorded and Path(recorded).resolve() == output:
-                            matches.append(candidate)
-                    except (OSError, ValueError, TypeError):
-                        continue
-                
-                if matches:
-                    report_path = max(matches, key=lambda p: p.stat().st_mtime)
-                    break
-            
-            if report_path is None:
-                raise FileNotFoundError(f"No processing report found for {output}")
+            report_path = _find_report(output)
 
         report = read_json(report_path)
 
-        # --- READ PASSPORT FROM FITS (HDU PROVENANCE) ---
-        fits_prov_id = None
-        fits_report_hash = None
-        fits_sig = None
-        fits_pubkey_fp = None
-        fits_merkle = None
-        fits_lights = None
-        fits_darks = None
-        fits_biases = None
-        fits_flats = None
-        fits_exptime = None
+        passport = _read_fits_passport(output, verifier)
 
-        try:
-            with fits.open(output, mode="readonly") as hdul:
-                if "PROVENANCE" not in hdul:
-                    verifier.fail(
-                        "FITS is missing the passport HDU (PROVENANCE)!"
-                    )
-                else:
-                    hdr = hdul["PROVENANCE"].header
-                    fits_prov_id = hdr.get("PROVID")
-                    fits_report_hash = hdr.get("PROVHASH")
-                    fits_pubkey_fp = hdr.get("PROVPUBK")
-                    fits_merkle = hdr.get("PROVMRKL")
-                    fits_lights = hdr.get("PROVLIT")
-                    fits_darks = hdr.get("PROVDRK")
-                    fits_biases = hdr.get("PROVBIA")
-                    fits_flats = hdr.get("PROVFLT")
-                    fits_exptime = hdr.get("PROVEXP")
+        schema = report.get("schema")
+        is_standalone = schema == "astroprov-standalone-v1"
 
-                    # Reassemble the signature from 3 parts
-                    sig1 = str(hdr.get("PROVSIG1", ""))
-                    sig2 = str(hdr.get("PROVSIG2", ""))
-                    sig3 = str(hdr.get("PROVSIG3", ""))
-                    fits_sig = (sig1 + sig2 + sig3).strip()
-
-                    verifier.ok(
-                        f"Passport found in FITS. ID: {fits_prov_id}"
-                    )
-        except Exception as e:
-            verifier.fail(f"Error reading FITS passport: {e}")
-
-        # --- SCHEMA AND ID CHECK ---
-        is_standalone = report.get("schema") == "astroprov-standalone-v1"
-
-        if report.get("schema") not in ("astroprov-processing-v2", "astroprov-standalone-v1"):
+        if schema not in (
+            "astroprov-processing-v2",
+            "astroprov-standalone-v1",
+        ):
             verifier.fail("Unknown processing report schema")
         elif not is_standalone and report.get("stage") != "post-stack":
             verifier.fail("Report is not for the post-stack stage")
         else:
             verifier.ok("Report type and stage verified")
 
-            # Compare passport ID
-            report_prov_id = report.get("passport_id")
             if not is_standalone:
+                report_prov_id = report.get("passport_id")
                 if not report_prov_id:
                     verifier.fail(
                         "JSON report is missing passport_id for comparison."
                     )
-                elif fits_prov_id != report_prov_id:
+                elif passport["id"] != report_prov_id:
                     verifier.fail(
-                        f"Passport ID mismatch! "
-                        f"FITS: {fits_prov_id}, JSON: {report_prov_id}"
+                        f"Passport ID mismatch! FITS: {passport['id']}, "
+                        f"JSON: {report_prov_id}"
                     )
                 else:
                     verifier.ok(
@@ -181,356 +515,35 @@ def verify_output(output_arg: str | Path, report_arg: str | Path | None = None) 
             else:
                 verifier.ok("Standalone passport verified")
 
-        # --- DIGITAL SIGNATURE (ED25519) CHECK ---
-        if fits_sig and fits_report_hash:
-            # 1. Verify that the JSON report has not been modified
-            current_report_bytes = report_path.read_bytes()
-            current_report_hash = hashlib.sha256(
-                current_report_bytes
-            ).hexdigest()
+        _verify_signature(output, report_path, passport, verifier)
 
-            if current_report_hash != fits_report_hash:
-                verifier.fail(
-                    "JSON report hash does not match the one recorded "
-                    "in FITS (report was modified)!"
-                )
-            else:
-                verifier.ok(
-                    "JSON report hash matches the one recorded in FITS"
-                )
+        recorded_output = report.get("output_fits") or {}
+        if not isinstance(recorded_output, dict):
+            verifier.fail("Report has invalid output_fits section")
+            recorded_output = {}
 
-            # 2. Verify the signature itself over the canonical payload
-            keys_dir = output.parent / ".astroprov" / "keys"
-            if not keys_dir.is_dir():
-                keys_dir = output.parent.parent / ".astroprov" / "keys"
-            
-            sig_payload = {
-                "report_hash": fits_report_hash,
-                "id": fits_prov_id,
-                "merkle_root": fits_merkle,
-                "lights_count": fits_lights,
-                "darks_count": fits_darks,
-                "biases_count": fits_biases,
-                "flats_count": fits_flats,
-                "exptime": fits_exptime,
-            }
-            sig_bytes = json.dumps(
-                sig_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-            ).encode("utf-8")
-
-            is_valid_sig = signature.verify_signature(
-                sig_bytes,
-                fits_sig,
-                keys_dir
-            )
-
-            if is_valid_sig:
-                verifier.ok(
-                    f"Ed25519 signature is valid "
-                    f"(FP: {fits_pubkey_fp})"
-                )
-            else:
-                verifier.fail(
-                    "Digital signature is INVALID! Signature file "
-                    "does not match the key or data was tampered with."
-                )
-        else:
-            verifier.fail(
-                "Passport is missing digital signature "
-                "(PROVSIG or PROVHASH)."
-            )
-
-        # --- HASHES OF OTHER ARTIFACTS ---
-        recorded_output = report.get("output_fits", {})
         report_output_path = recorded_output.get("path")
-
         if not report_output_path:
             verifier.fail("Report is missing the output FITS path")
         elif Path(report_output_path).resolve() != output:
             verifier.fail("Report refers to a different output FITS")
 
-        # IMPORTANT: use calculate_fits_data_hash, not sha256_file!
-        if recorded_output.get("sha256"):
+        expected_data_hash = recorded_output.get("sha256")
+        if expected_data_hash:
             actual_data_hash = fits_prov.calculate_fits_data_hash(output)
-            if actual_data_hash == recorded_output["sha256"]:
+            if actual_data_hash == expected_data_hash:
                 verifier.ok(
-                    "Output FITS (data without passport): "
-                    "SHA-256 matches"
+                    "Output FITS (data without passport): SHA-256 matches"
                 )
             else:
                 verifier.fail(
                     "Output FITS: data SHA-256 does NOT match!"
                 )
         else:
-            verifier.fail(
-                "Report is missing the output FITS SHA-256"
-            )
+            verifier.fail("Report is missing the output FITS SHA-256")
 
-        # Skip pipeline-specific checks if this is a standalone seal
         if not is_standalone:
-            sequence = report.get("sequence", {})
-            sequence_path = Path(sequence.get("path", ""))
-            if not sequence_path.is_absolute():
-                sequence_path = output.parent.parent / sequence_path
-
-            if sequence.get("sha256"):
-                verifier.check_hash(
-                    sequence_path,
-                    sequence["sha256"],
-                    "Sequence .seq",
-                )
-            else:
-                verifier.fail("Report is missing .seq SHA-256")
-
-            mapping_info = report.get("mapping_file", {})
-            mapping_path_value = mapping_info.get("path")
-
-            if not mapping_path_value:
-                verifier.fail("Report is missing the mapping path")
-                mapping_path = None
-            else:
-                mapping_path = Path(mapping_path_value)
-                if not mapping_path.is_absolute():
-                    mapping_path = output.parent.parent / mapping_path
-                mapping_path = mapping_path.resolve()
-                verifier.check_hash(
-                    mapping_path,
-                    mapping_info.get("sha256", ""),
-                    "Mapping",
-                )
-
-            pre_info = report.get("pre_stack_report", {})
-            pre_path_value = pre_info.get("path")
-
-            if not pre_path_value:
-                verifier.fail("Pre-stack report is not specified")
-                pre_path = None
-                pre_report = None
-            else:
-                pre_path = Path(pre_path_value)
-                if not pre_path.is_absolute():
-                    pre_path = output.parent.parent / pre_path
-                pre_path = pre_path.resolve()
-                verifier.check_hash(
-                    pre_path,
-                    pre_info.get("sha256", ""),
-                    "Pre-stack report",
-                )
-
-                try:
-                    pre_report = read_json(pre_path)
-                    if pre_report.get("schema") != "astroprov-pre-stack-v1":
-                        verifier.fail(
-                            "Unknown pre-stack report schema"
-                        )
-
-                    pre_status = pre_report.get("status")
-                    if pre_status not in ("ready", "validation_failed"):
-                        verifier.fail(
-                            "Pre-stack report has "
-                            f"unknown status: {pre_status}"
-                        )
-                    elif pre_status == "validation_failed":
-                        verifier.ok(
-                            "Pre-stack report has status "
-                            "validation_failed (expected when frames are rejected)"
-                        )
-
-                    pre_seq = pre_report.get("sequence", {})
-                    curr_seq = sequence
-
-                    if pre_seq.get("sha256") != curr_seq.get("sha256"):
-                        if (
-                            pre_seq.get("selected_indices")
-                            == curr_seq.get("selected_indices")
-                        ):
-                            verifier.ok(
-                                ".seq hash changed (Siril stacking), "
-                                "but frame list is the same"
-                            )
-                        else:
-                            verifier.fail(
-                                "Frame list in .seq has changed!"
-                            )
-
-                    if (
-                        pre_report.get("mapping_file", {}).get("sha256")
-                        != mapping_info.get("sha256")
-                    ):
-                        verifier.fail(
-                            "Mapping hash in reports does not match"
-                        )
-
-                    if pre_info.get("verified") is not True:
-                        verifier.fail(
-                            "Pre-stack report is not marked "
-                            "as verified"
-                        )
-                    else:
-                        verifier.ok(
-                            "Pre-stack report link verified"
-                        )
-
-                except (OSError, ValueError, TypeError) as exc:
-                    verifier.fail(
-                        f"Could not read pre-stack report: {exc}"
-                    )
-                    pre_report = None
-
-            mapping_data = None
-            if mapping_path is not None and mapping_path.is_file():
-                try:
-                    mapping_data = read_json(mapping_path)
-                except (OSError, ValueError, TypeError) as exc:
-                    verifier.fail(f"Could not read mapping: {exc}")
-
-            mapping_root = (
-                mapping_path.parent if mapping_path
-                else output.parent.parent
-            )
-
-            if mapping_data is not None:
-                if mapping_data.get("schema") != "astroprov-frame-mapping-v1":
-                    verifier.fail("Unknown mapping schema")
-                else:
-                    records = mapping_data.get("mappings", [])
-                    if not isinstance(records, list) or not records:
-                        verifier.fail("Mapping contains no records")
-                    else:
-                        frame_errors_before = len(verifier.errors)
-                        checked_pairs = 0
-
-                        records_with_processed = [
-                            r for r in records
-                            if r.get("processed", {}).get("path")
-                        ]
-                        total_pairs = len(records_with_processed)
-
-                        pbar = tqdm(
-                            total=total_pairs,
-                            bar_format="{desc}",
-                            dynamic_ncols=True,
-                            disable=None,
-                        )
-
-                        for idx, record in enumerate(
-                            records_with_processed, 1
-                        ):
-                            pbar.set_description_str(
-                                f"Frame check: {idx}/{total_pairs}",
-                                refresh=True,
-                            )
-
-                            for key, label in (
-                                ("original", "Original frame"),
-                                ("processed", "Processed frame"),
-                            ):
-                                item = record.get(key, {})
-                                relative_path = item.get("path")
-                                expected_hash = item.get("sha256")
-
-                                if not relative_path or not expected_hash:
-                                    verifier.fail(
-                                        "Mapping is missing path or "
-                                        f"SHA-256: {key}"
-                                    )
-                                    continue
-
-                                frame_path = resolve_recorded_path(
-                                    relative_path, mapping_root
-                                )
-                                verifier.check_hash(
-                                    frame_path,
-                                    expected_hash,
-                                    label,
-                                    quiet=True,
-                                )
-
-                            checked_pairs += 1
-                            pbar.update(1)
-
-                        if total_pairs > 0:
-                            pbar.set_description_str(
-                                f"Frame check: "
-                                f"{total_pairs}/{total_pairs} done",
-                                refresh=True,
-                            )
-                        pbar.close()
-
-                        if len(verifier.errors) == frame_errors_before:
-                            verifier.ok(
-                                "Hashes of all available original and "
-                                "processed frames verified: "
-                                f"{checked_pairs} pairs "
-                                "(missing skipped)"
-                            )
-
-                        if mapping_data.get("matching_count") != len(records):
-                            verifier.fail(
-                                "matching_count does not match "
-                                "mapping record count"
-                            )
-
-            cross = report.get("cross_check", {})
-            selected_count = sequence.get("selected_count")
-            excluded_count = sequence.get("excluded_count")
-            total_count = sequence.get("total_frames")
-
-            if selected_count + excluded_count != total_count:
-                verifier.fail(
-                    "Selected and excluded frame counts do not add up"
-                )
-            else:
-                verifier.ok(
-                    f"Frame selection is consistent: {selected_count} selected, "
-                    f"{excluded_count} excluded"
-                )
-
-            if cross.get("consistent") is not True:
-                verifier.fail("FITS frame count check failed")
-            elif cross.get("selected_count") != selected_count:
-                verifier.fail(
-                    "Selected count in cross_check does not match"
-                )
-            elif cross.get("fits_recorded_count") != selected_count:
-                verifier.fail(
-                    "FITS frame count does not match the selection"
-                )
-            else:
-                verifier.ok(
-                    f"FITS frame count consistent: {selected_count}"
-                )
-
-            validation = report.get("mapping_validation", {})
-
-            if validation.get("consistent") is not True:
-                real_errors = [
-                    e for e in validation.get("errors", [])
-                    if "no mapping entry" not in e
-                ]
-                if real_errors:
-                    verifier.fail(
-                        f"Mapping validation failed: {real_errors}"
-                    )
-                else:
-                    verifier.ok(
-                        "Mapping validation: only missing "
-                        "frames (expected)"
-                    )
-            elif validation.get("errors"):
-                verifier.fail("Mapping validation contains errors")
-            elif (
-                validation.get("matched_frame_count") != total_count
-                or validation.get("selected_mapping_count") != selected_count
-                or validation.get("excluded_mapping_count") != excluded_count
-                or validation.get("missing_sequence_indices")
-                or validation.get("extra_mapping_paths")
-            ):
-                verifier.fail(
-                    "Mapping frame counts or composition do not match"
-                )
-            else:
-                verifier.ok("Mapping and sequence are consistent")
+            _verify_pipeline_artifacts(report, output, verifier)
 
         if report.get("warnings"):
             print("\n[INFO] Processing report has warnings:")
@@ -549,8 +562,8 @@ def verify_output(output_arg: str | Path, report_arg: str | Path | None = None) 
         if verifier.errors:
             print("\nVERDICT: FAIL — chain verification failed.")
             print(
-                "One or more integrity, consistency, "
-                "or signature checks failed."
+                "One or more integrity, consistency, or signature "
+                "checks failed."
             )
             return 1
 
