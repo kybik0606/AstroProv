@@ -37,7 +37,7 @@ def write_provenance(fits_path: Path | str, prov_data: dict) -> None:
         hdu.header["PROVPUBK"] = (str(prov_data.get("pubkey_fingerprint", "")), "")
         hdu.header["PROVHASH"] = (str(prov_data.get("report_hash", "")), "")
 
-        # Ed25519 signature (split into 3 parts)
+        # Ed25519 signature (split into 3 parts to fit FITS 68-char limit)
         sig = str(prov_data.get("signature", ""))
         hdu.header["PROVSIG1"] = (sig[:43], "")
         hdu.header["PROVSIG2"] = (sig[43:86], "")
@@ -87,8 +87,8 @@ def read_provenance(fits_path: Path | str) -> dict | None:
 
 def calculate_fits_data_hash(fits_path: Path | str) -> str:
     """
-    Computes the SHA-256 hash of the FITS file, COMPLETELY IGNORING the 'PROVENANCE' HDU
-    and the service headers that change when it is added.
+    Computes the SHA-256 hash of the FITS file, COMPLETELY IGNORING 
+    the 'PROVENANCE' HDU and the service headers that change when it is added.
     """
     fits_path = Path(fits_path).resolve()
     if not fits_path.is_file():
@@ -96,7 +96,9 @@ def calculate_fits_data_hash(fits_path: Path | str) -> str:
 
     with fits.open(fits_path, mode="readonly", memmap=False) as hdul:
         # Build a copy of the HDUList without the passport
-        clean_hdul = fits.HDUList([hdu.copy() for hdu in hdul if hdu.name != "PROVENANCE"])
+        clean_hdul = fits.HDUList(
+            [hdu.copy() for hdu in hdul if hdu.name != "PROVENANCE"]
+        )
         
         # Clear the service headers that Astropy changes automatically
         for hdu in clean_hdul:
@@ -138,5 +140,5 @@ if __name__ == "__main__":
             
         else:
             print("Passport not found (HDU 'PROVENANCE' is missing).")
-    except Exception as e:
+    except (OSError, ValueError) as e:
         print(f"Error: {e}")
