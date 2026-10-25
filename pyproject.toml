@@ -1,0 +1,31 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "astroprov"
+version = "1.2.0"
+description = "Cryptographic provenance for astronomical FITS data"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "GPL-3.0-or-later"
+authors = [
+    {name = "Aliaksei Chernik"}
+]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: OS Independent",
+    "Topic :: Scientific/Engineering :: Astronomy",
+]
+dependencies = [
+    "astropy>=8.0.2",
+    "cryptography>=50.0.2",
+    "tqdm>=4.70.1",
+]
+
+[project.urls]
+Homepage = "https://github.com/kybik0606/AstroProv"
+Repository = "https://github.com/kybik0606/AstroProv"
+
+[tool.setuptools.packages.find]
+include = ["astroprov*"]
