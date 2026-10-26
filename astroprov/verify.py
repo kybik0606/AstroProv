@@ -11,7 +11,7 @@ from pathlib import Path
 from astropy.io import fits
 from tqdm import tqdm
 
-from astroprov import signature, fits_prov
+from astroprov import signature, fits_prov, timestamping
 from astroprov.utils import sha256_file
 
 
@@ -196,6 +196,27 @@ def _verify_signature(
             "Digital signature is INVALID! Signature file does not match "
             "the key or data was tampered with."
         )
+
+
+def _verify_timestamp(
+    report_path: Path,
+    verifier: Verification,
+) -> None:
+    """Verify the FreeTSA trusted timestamp if present."""
+    tsr_path = report_path.with_suffix(".tsr")
+    if not tsr_path.is_file():
+        verifier.ok("No trusted timestamp found (optional)")
+        return
+
+    try:
+        # ИСПРАВЛЕНО: передаем байты отчета и вызываем verify_data
+        report_bytes = report_path.read_bytes()
+        if timestamping.verify_data(report_bytes, tsr_path):
+            verifier.ok("Trusted timestamp (RFC 3161) is valid")
+        else:
+            verifier.fail("Trusted timestamp (RFC 3161) is INVALID!")
+    except Exception as exc:
+        verifier.fail(f"Error verifying timestamp: {exc}")
 
 
 def _verify_mapping_frames(
@@ -516,6 +537,9 @@ def verify_output(
                 verifier.ok("Standalone passport verified")
 
         _verify_signature(output, report_path, passport, verifier)
+        
+        if passport["report_hash"]:
+            _verify_timestamp(report_path, verifier)
 
         recorded_output = report.get("output_fits") or {}
         if not isinstance(recorded_output, dict):

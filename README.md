@@ -1,4 +1,4 @@
-![Version](https://img.shields.io/badge/version-v1.3.0-blue)
+![Version](https://img.shields.io/badge/version-v1.4.0-blue)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
@@ -12,6 +12,7 @@ While protocols like FAIR (Findable, Accessible, Interoperable, Reusable) govern
 
 *   **Integrity (SHA-256 & Merkle Trees):** Calculates cryptographic hashes of all raw frames (lights, darks, biases) and builds a Merkle Tree to create a single, tamper-evident root hash.
 *   **Authenticity (Ed25519 Signatures):** Uses asymmetric cryptography to digitally sign the processing report and all passport metadata. This guarantees non-repudiation (proof of who processed the data) and prevents tampering with statistics.
+*   **Trusted Timestamps (RFC 3161):** Integrates with the [FreeTSA](https://freetsa.org/) Time Stamping Authority. This provides cryptographic proof of *when* the file was sealed, preventing backdating attacks even if a private key is compromised. Verification is performed fully offline using bundled public certificates.
 *   **Self-Contained FITS Passport:** Injects a custom `PROVENANCE` HDU (Header/Data Unit) directly into the stacked FITS file. The file carries its own metadata, statistics, and signature, requiring no external JSON files for basic inspection.
 *   **Anti-Tampering:** Instantly detects if pixels, `.seq` sequence files, JSON reports, or passport fields (e.g., frame counts, merkle roots) have been modified, preventing context-swapping and data manipulation.
 *   **Cross-Platform:** Fully tested on **Windows 10** and **Linux (Debian)**. The framework automatically detects the Siril CLI executable across different operating systems.
@@ -25,6 +26,7 @@ AstroProv is built around a chain of trust:
 3.  **Reports**: A JSON manifest links the raw NINA frames to the processed Siril frames.
 4.  **Final Stack**: The `result.fit` file is generated.
 5.  **Sealing**: A digital signature is generated from the JSON report and passport data.
+    *   *Timestamping*: The report hash is sent to [FreeTSA](https://freetsa.org/) (RFC 3161 TSA), which returns a cryptographically signed `.tsr` token confirming the exact time.
 6.  **Embedding**: The hash, statistics, and signature are baked into the `PROVENANCE` HDU of the FITS file.
 
 ### Core Modules
@@ -38,6 +40,7 @@ AstroProv is built around a chain of trust:
 *   `astroprov/verify.py`: Validates the entire chain of trust (hashes + signature + FITS HDU).
 *   `astroprov/inspect.py`: A human-readable CLI to view the passport inside a FITS file.
 *   `astroprov/siril_wrapper.py`: Shared wrapper for locating and executing the Siril CLI (prevents code duplication).
+*   `astroprov/timestamping.py`: Handles RFC 3161 Time Stamping Authority (TSA) requests and offline verification.
 *   `astroprov/cli/`: Command-line interfaces (orchestrators integrating with Siril).
 *   `astroprov/cli/seal.py`: Standalone tool to seal arbitrary FITS files without Siril.
 
@@ -132,7 +135,17 @@ python tests/run_security_tests.py "test_data/result.fit"
 
 Adding a passport to a FITS file changes the file's physical hash. To solve this, AstroProv uses a **Canonical FITS Data Hash** (`calculate_fits_data_hash`). It calculates the SHA-256 hash of the image data *while ignoring* the `PROVENANCE` HDU and standard FITS checksums (`EXTEND`, `CHECKSUM`). This allows the passport to be re-signed or updated without invalidating the data hash.
 
-## Security & Robustness (v1.3.0 Update)
+## Trusted Timestamps (RFC 3161)
+
+While Ed25519 signatures prove *who* created the data, they cannot inherently prove *when* it was created (a compromised key could be used to backdate a file). To solve this, AstroProv integrates with **FreeTSA**, a free RFC 3161 Time Stamping Authority.
+
+1.  When a file is sealed, the SHA-256 hash of the generated JSON report is sent to FreeTSA.
+2.  FreeTSA returns a `.tsr` (TimeStampToken) file, cryptographically signed by their trusted X.509 certificate.
+3.  When `astroprov.verify` runs, it automatically detects the `.tsr` file and verifies it **offline** using the public certificates bundled in `astroprov/certs/`.
+
+This establishes a true chain of trust: the data is authentic (Ed25519), and it existed at a specific point in time (FreeTSA).
+
+## Security & Robustness
 
 In version 1.3.0, the codebase underwent a comprehensive security and architectural audit:
 
@@ -142,6 +155,10 @@ In version 1.3.0, the codebase underwent a comprehensive security and architectu
 *   **Strict Error Handling:** Removed broad `except Exception` blocks across the codebase. Specific exceptions (`OSError`, `ValueError`, `RuntimeError`) are now caught and propagated correctly.
 *   **Private Key Protection:** The private Ed25519 key is explicitly restricted to `chmod 600` (owner read/write only) upon generation on Unix-like systems.
 *   **Tamper-Test Verified:** A dedicated test suite (`tests/run_security_tests.py`) asserts that tampering with any of the 7 passport header fields instantly triggers a `FAIL` verdict.
+
+In version 1.4.0, we added trusted third-party verification:
+
+*   **Trusted Third-Party (TTP):** Integrated RFC 3161 timestamps via [FreeTSA](https://freetsa.org/) to prevent timestamp spoofing and backdating attacks. Proof of existence is verified fully offline using X.509 certificates bundled directly into the repository.
 
 ## License
 
