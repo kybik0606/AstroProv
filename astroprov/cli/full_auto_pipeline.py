@@ -10,7 +10,7 @@ from pathlib import Path
 
 from astropy.io import fits
 
-from astroprov import mapping, processing, snapshot, verify, fits_prov, signature
+from astroprov import mapping, processing, snapshot, verify, fits_prov, signature, timestamping
 from astroprov.siril_wrapper import analyze_script_calibration, find_siril_cli, run_siril_cli
 
 
@@ -158,6 +158,17 @@ cd ..
 
         report_bytes = proc_report_path.read_bytes()
         report_hash = hashlib.sha256(report_bytes).hexdigest()
+
+        # --- FreeTSA Timestamp ---
+        tsr_path = proc_report_path.with_suffix(".tsr")
+        print("  Requesting trusted timestamp from FreeTSA...")
+        try:
+            # ИСПРАВЛЕНО: передаем байты, а не хэш
+            timestamping.stamp_data(report_bytes, tsr_path)
+            print(f"  Timestamp saved: {tsr_path.name}")
+        except Exception as exc:
+            print(f"  [WARNING] Timestamping failed: {exc}")
+        # -------------------------
 
         sig_payload = {
             "report_hash": report_hash,

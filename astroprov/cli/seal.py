@@ -8,7 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from astropy.io import fits
-from astroprov import fits_prov, signature
+from astroprov import fits_prov, signature, timestamping
 
 
 def _safe_int(value: object) -> int | None:
@@ -107,6 +107,17 @@ def seal_fits(
     runs_dir.mkdir(parents=True, exist_ok=True)
     report_path = runs_dir / f"processing-{passport_id}.json"
     report_path.write_bytes(report_bytes)
+
+    # --- FreeTSA Timestamp ---
+    tsr_path = report_path.with_suffix(".tsr")
+    print("  Requesting trusted timestamp from FreeTSA...")
+    try:
+        # ИСПРАВЛЕНО: передаем байты, а не хэш
+        timestamping.stamp_data(report_bytes, tsr_path)
+        print(f"  Timestamp saved: {tsr_path.name}")
+    except Exception as exc:
+        print(f"  [WARNING] Timestamping failed: {exc}")
+    # -------------------------
 
     # 5. Build canonical payload and sign
     sig_payload = {

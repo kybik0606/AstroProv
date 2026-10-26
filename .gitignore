@@ -22,3 +22,7 @@ test_data/
 dist/
 build/
 *.egg-info/
+
+# Allow public FreeTSA certificates
+!astroprov/certs/cacert.pem
+!astroprov/certs/tsa.crt
