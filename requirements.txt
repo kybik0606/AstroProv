@@ -2,3 +2,4 @@ astropy>=8.0.2
 cryptography>=50.0.2
 tqdm>=4.70.1
 rfc3161-client>=1.0.9
+requests>=2.34.2
