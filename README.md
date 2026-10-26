@@ -1,4 +1,4 @@
-![Version](https://img.shields.io/badge/version-v1.2.0-blue)
+![Version](https://img.shields.io/badge/version-v1.3.0-blue)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
@@ -29,6 +29,7 @@ AstroProv is built around a chain of trust:
 
 ### Core Modules
 
+*   `astroprov/utils.py`: Shared utility functions (e.g., memory-bounded SHA-256 file hashing).
 *   `astroprov/snapshot.py`: Hashes input directories and builds Merkle Trees.
 *   `astroprov/mapping.py`: Matches NINA raw files to Siril processed files using FITS headers.
 *   `astroprov/processing.py`: Creates JSON reports for the "pre-stack" and "post-stack" states.
@@ -36,6 +37,7 @@ AstroProv is built around a chain of trust:
 *   `astroprov/fits_prov.py`: Embeds and reads the `PROVENANCE` HDU, and calculates the canonical data hash.
 *   `astroprov/verify.py`: Validates the entire chain of trust (hashes + signature + FITS HDU).
 *   `astroprov/inspect.py`: A human-readable CLI to view the passport inside a FITS file.
+*   `astroprov/siril_wrapper.py`: Shared wrapper for locating and executing the Siril CLI (prevents code duplication).
 *   `astroprov/cli/`: Command-line interfaces (orchestrators integrating with Siril).
 *   `astroprov/cli/seal.py`: Standalone tool to seal arbitrary FITS files without Siril.
 
@@ -64,7 +66,7 @@ pip install -r requirements.txt
 
 ## Usage
 
-AstroProv provides two main workflows:
+AstroProv provides three main workflows:
 
 > *Note on Siril CLI: By default, the pipeline automatically searches for `siril-cli` in your system `PATH`. If it is installed in a custom location, you can specify it using the `--siril-cli /path/to/siril-cli` argument.*
 
@@ -111,7 +113,7 @@ python -m astroprov.verify "M101/process/r_pp_light__stacked.fit"
 
 ## Testing
 
-The project includes automated tests for both standard pipeline execution and security (tamper-resistance). Test execution times are benchmarked to help identify performance bottlenecks.
+The project includes automated tests for both standard pipeline execution and security (tamper-resistance). All core modules have been tested in isolation, and the full suite runs successfully on both Windows and Linux. Test execution times are benchmarked to help identify performance bottlenecks.
 
 To run the predefined end-to-end tests, place your test object directories inside a `test_data/` folder in the project root (e.g., `test_data/M101`). This folder is ignored by Git to prevent committing large FITS files.
 
@@ -129,6 +131,17 @@ python tests/run_security_tests.py "test_data/result.fit"
 ## The "Chicken and Egg" Solution
 
 Adding a passport to a FITS file changes the file's physical hash. To solve this, AstroProv uses a **Canonical FITS Data Hash** (`calculate_fits_data_hash`). It calculates the SHA-256 hash of the image data *while ignoring* the `PROVENANCE` HDU and standard FITS checksums (`EXTEND`, `CHECKSUM`). This allows the passport to be re-signed or updated without invalidating the data hash.
+
+## Security & Robustness (v1.3.0 Update)
+
+In version 1.3.0, the codebase underwent a comprehensive security and architectural audit:
+
+*   **CLI Exit Codes:** Fixed a critical bug where `verify.py` always returned exit code `0` (success) even on failure. Now, all CLIs correctly return `0` (PASS) or `1` (FAIL), making them safe to use in automated CI/CD pipelines.
+*   **Path Traversal Protection:** Added strict validation in `verify.py` and `processing.py` to ensure recorded paths in JSON reports cannot escape the project directory (preventing arbitrary file read vulnerabilities).
+*   **Safe FITS Parsing:** Introduced `_safe_int` and `_safe_float` helpers in `inspect.py` and `seal.py`. Malformed or malicious FITS headers (e.g., `EXPTIME = "unknown"`) will no longer crash the application; they are handled gracefully with `[NO DATA]` messages.
+*   **Strict Error Handling:** Removed broad `except Exception` blocks across the codebase. Specific exceptions (`OSError`, `ValueError`, `RuntimeError`) are now caught and propagated correctly.
+*   **Private Key Protection:** The private Ed25519 key is explicitly restricted to `chmod 600` (owner read/write only) upon generation on Unix-like systems.
+*   **Tamper-Test Verified:** A dedicated test suite (`tests/run_security_tests.py`) asserts that tampering with any of the 7 passport header fields instantly triggers a `FAIL` verdict.
 
 ## License
 
