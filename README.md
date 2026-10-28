@@ -8,6 +8,12 @@ AstroProv is a lightweight Python framework designed to guarantee the **integrit
 
 While protocols like FAIR (Findable, Accessible, Interoperable, Reusable) govern public data archives, there is a critical lack of security during the proprietary/embargo phase. AstroProv fills this gap by embedding a cryptographically signed, self-contained passport directly into the final FITS file.
 
+## Video Demonstration
+
+Watch a short demonstration of AstroProv in action, showing the sealing process, passport inspection, and cryptographic verification:
+
+[![AstroProv Demo](https://img.youtube.com/vi/https://youtu.be/dAb1o1f6iws/0.jpg)](https://youtu.be/dAb1o1f6iws)
+
 ## Key Features
 
 *   **Integrity (SHA-256 & Merkle Trees):** Calculates cryptographic hashes of all raw frames (lights, darks, biases) and builds a Merkle Tree to create a single, tamper-evident root hash.
