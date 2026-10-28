@@ -12,7 +12,7 @@ While protocols like FAIR (Findable, Accessible, Interoperable, Reusable) govern
 
 Watch a short demonstration of AstroProv in action, showing the sealing process, passport inspection, and cryptographic verification:
 
-[![AstroProv Demo](https://img.youtube.com/vi/https://youtu.be/dAb1o1f6iws/0.jpg)](https://youtu.be/dAb1o1f6iws)
+[![AstroProv Demo](https://img.youtube.com/vi/dAb1o1f6iws/0.jpg)](https://www.youtube.com/watch?v=dAb1o1f6iws)
 
 ## Key Features
 
