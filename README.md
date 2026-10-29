@@ -47,8 +47,7 @@ AstroProv is built around a chain of trust:
 *   `astroprov/inspect.py`: A human-readable CLI to view the passport inside a FITS file.
 *   `astroprov/siril_wrapper.py`: Shared wrapper for locating and executing the Siril CLI (prevents code duplication).
 *   `astroprov/timestamping.py`: Handles RFC 3161 Time Stamping Authority (TSA) requests and offline verification.
-*   `astroprov/cli/`: Command-line interfaces (orchestrators integrating with Siril).
-*   `astroprov/cli/seal.py`: Standalone tool to seal arbitrary FITS files without Siril.
+*   `astroprov/cli/`: Command-line tools (pipelines orchestrating Siril and standalone sealing).
 
 ## Installation
 
@@ -185,7 +184,7 @@ You should have received a copy of the GNU General Public License
 along with this program. If not, see <https://www.gnu.org/licenses/>.
 ```
 
-### Acknowledgements
+## Acknowledgements
 
 *   The Siril preprocessing scripts in `siril_scripts/` (e.g., `OSC_Preprocessing_AstroProv_WithoutFlat.ssf`) are modified derivatives of the original Siril scripts (e.g., `OSC_Preprocessing_WithoutFlat.ssf`) created by **Cyril Richard** (C) 2020.
 *   Modifications were made by Aliaksei Chernik. The modified scripts were renamed by adding `AstroProv` to the filenames to distinguish them from the originals. The final stacking command was removed from all scripts to allow AstroProv to perform cryptographic verification between the calibration/alignment and stacking phases.
