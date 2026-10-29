@@ -1,0 +1,10 @@
+AstroProv: Cryptographic provenance for astronomical FITS data
+Copyright (C) 2026 Aliaksei Chernik
+
+This product includes software developed by third parties:
+
+* astropy (https://www.astropy.org/) - BSD-3-Clause License
+* cryptography (https://github.com/pyca/cryptography) - Apache-2.0 OR BSD-3-Clause
+* tqdm (https://tqdm.github.io/) - MPL-2.0 AND MIT
+* rfc3161-client (https://github.com/trailofbits/rfc3161-client) - Apache-2.0
+* requests (https://requests.readthedocs.io/) - Apache-2.0
