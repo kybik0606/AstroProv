@@ -166,7 +166,7 @@ In version 1.4.0, we added trusted third-party verification:
 
 *   **Trusted Third-Party (TTP):** Integrated RFC 3161 timestamps via [FreeTSA](https://freetsa.org/) to prevent timestamp spoofing and backdating attacks. Proof of existence is verified fully offline using X.509 certificates bundled directly into the repository.
 
-## License
+## Copyright
 
 ```text
 Copyright (C) 2026 Aliaksei Chernik
