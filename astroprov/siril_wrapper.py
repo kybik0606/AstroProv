@@ -58,14 +58,14 @@ def find_siril_cli(cli_arg: Path | str | None) -> Path:
         path = Path(cli_arg)
         if path.is_file():
             return path.resolve()
-        print(f"WARNING: Provided siril-cli path not found: {path}")
+        print(f"  [WARN] Provided siril-cli path not found: {path}")
 
     env_path = os.environ.get("SIRIL_CLI_PATH")
     if env_path:
         path = Path(env_path)
         if path.is_file():
             return path.resolve()
-        print(f"WARNING: SIRIL_CLI_PATH set but file not found: {path}")
+        print(f"  [WARN] SIRIL_CLI_PATH set but file not found: {path}")
 
     which_path = shutil.which("siril-cli") or shutil.which("siril-cli.exe")
     if which_path:
@@ -87,12 +87,12 @@ def run_siril_cli(
     script_path: Path,
     work_dir: Path,
     action_name: str,
-    indent: str = "",
+    indent: str = "  ",
     prefix: str = "[*] ",
 ) -> None:
     """Run Siril CLI with the given script."""
-    print(f"{indent}{prefix}Running Siril CLI: {action_name}")
-    print(f"{indent}  Script: {script_path.name}")
+    print(f"{indent}{prefix}Running Siril: {action_name}")
+    print(f"{indent}  - Script: {script_path.name}")
 
     cmd = [
         str(siril_exe),
@@ -111,3 +111,5 @@ def run_siril_cli(
             f"{result.stdout}\n{result.stderr}"
         )
         raise RuntimeError(error_msg)
+    
+    print(f"{indent}  [OK] Finished successfully.")

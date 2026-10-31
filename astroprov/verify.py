@@ -246,7 +246,7 @@ def _verify_source_data(
     verifier: Verification,
 ) -> None:
     """Verify that raw source files match the Merkle roots in the report."""
-    print(f"\n[*] Verifying raw source data in {raw_dir}...")
+    print(f"\n  [*] Verifying raw source data in {raw_dir.name}...")
     if not raw_dir.is_dir():
         verifier.fail(f"Raw directory not found: {raw_dir}")
         return
@@ -292,7 +292,7 @@ def _verify_mapping_frames(
 
     pbar = tqdm(
         total=total_pairs,
-        bar_format="{desc}",
+        bar_format="  {desc}",
         dynamic_ncols=True,
         disable=None,
     )
@@ -541,11 +541,11 @@ def verify_output(
     verifier = Verification()
     output = Path(output_arg).resolve()
 
-    print("\nAstroProv — FITS provenance verification\n")
-    print(f"Output file: {output.name}")
+    print("\nASTROPROV FITS PROVENANCE VERIFICATION\n")
+    print(f"  [*] Output file: {output.name}")
 
     if not output.is_file():
-        print(f"\nFAIL: output FITS not found: {output}")
+        print(f"\n  [FAIL] Output FITS not found: {output.name}")
         return 1
 
     try:
@@ -628,36 +628,36 @@ def verify_output(
             _verify_source_data(report, Path(raw_dir_arg).resolve(), verifier)
 
         if report.get("warnings"):
-            print("\n[INFO] Processing report has warnings:")
+            print("\n  [WARN] Processing report has warnings:")
             for w in report["warnings"]:
-                print(f"       - {w}")
+                print(f"    - {w}")
 
-        print(f"\nReport: {report_path}")
-        print("\nResults:")
+        print(f"\n  [*] Report: {report_path.name}")
+        print("\n  [*] Verification Results:\n")
 
         for message in verifier.checks:
-            print(f"[OK] {message}")
+            print(f"  [OK] {message}")
 
         for message in verifier.errors:
-            print(f"[FAIL] {message}")
+            print(f"  [FAIL] {message}")
 
         if verifier.errors:
-            print("\nVERDICT: FAIL — chain verification failed.")
+            print("\n  [FAIL] VERDICT: FAIL — chain verification failed.")
             print(
-                "One or more integrity, consistency, or signature "
+                "         One or more integrity, consistency, or signature "
                 "checks failed."
             )
             return 1
 
-        print("\nVERDICT: PASS — chain verified.")
+        print("\n  [OK] VERDICT: PASS — chain verified.")
         print(
-            "Integrity, consistency, and Ed25519 signature "
+            "       Integrity, consistency, and Ed25519 signature "
             "are all valid."
         )
         return 0
 
     except (OSError, ValueError, TypeError, KeyError) as exc:
-        print(f"\nFAIL: error reading or verifying data: {exc}")
+        print(f"\n  [FAIL] Error reading or verifying data: {exc}")
         return 1
 
 
