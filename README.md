@@ -74,7 +74,7 @@ pip install -r requirements.txt
 
 ## Usage
 
-AstroProv provides three main workflows:
+AstroProv provides four main workflows:
 
 > *Note on Siril CLI: By default, the pipeline automatically searches for `siril-cli` in your system `PATH`. If it is installed in a custom location, you can specify it using the `--siril-cli /path/to/siril-cli` argument.*
 
@@ -92,32 +92,277 @@ This mode pauses after calibration, allowing you to open Siril (GUI), manually r
 python -m astroprov.cli.auto_pipeline M101 --script "siril_scripts/OSC_Preprocessing_AstroProv_WithoutDBF.ssf"
 ```
 
-### 3. Standalone Sealing (No Siril required)
-You can cryptographically seal any existing FITS file (e.g., processed in PixInsight or ASTAP) without running the full processing pipeline. The tool automatically detects metadata (like frame counts and exposure) from standard FITS headers.
+### 3. Standalone Sealing (Single FITS file)
+You can cryptographically seal any existing FITS file without running the full processing pipeline. The tool automatically detects metadata from standard FITS headers.
 
 ```bash
 python -m astroprov.cli.seal "path/to/your/image.fits" --object "M31"
 ```
 
-If metadata is missing in the FITS header, you can manually override it using `--lights` and `--exptime` arguments.
-
-### Inspecting and Verifying Data
-
-**View the Passport (Human-Readable):**
-You can inspect the provenance of any processed FITS file without needing the original raw data.
+### 4. Universal Collection Sealing (FITS + Raw Sources)
+If you processed your data in third-party software but want to cryptographically link your final stack to the original raw frames, use this mode. It builds a Merkle Tree of your raw lights, darks, and flats, and embeds it into the passport.
 
 ```bash
-python -m astroprov.inspect "M101/process/r_pp_light__stacked.fit"
+python -m astroprov.cli.seal_collection "path/to/your/stack.fit" --raw "path/to/raw_folder" --object "M31"
 ```
-*Output includes: Passport ID, Merkle Root, Frame Counts (Lights/Darks/Biases), Total Exposure Time, and Author Fingerprint.*
 
-**Verify Integrity (Cryptographic Check):**
-Re-calculates all hashes, validates the Ed25519 signature, and checks the `.seq` file state.
+## Detailed CLI Reference
+
+While the pipelines automate the entire process, AstroProv also provides granular modular tools for advanced users. All tools output clear, copy-pasteable status messages.
+
+### Scanning Source Data (`snapshot.py`)
+Before processing, AstroProv scans your raw directories (`lights`, `darks`, `bias`, `flats`) to calculate SHA-256 hashes and build a Merkle Tree for each category. This creates a foundational manifest.
 
 ```bash
-python -m astroprov.verify "M101/process/r_pp_light__stacked.fit"
+python -m astroprov.snapshot "test_data/M101"
 ```
-*Verdict: `PASS` (Data is authentic and unmodified) or `FAIL` (Tampering detected).*
+
+Expected Output:
+
+```text
+  [*] Object: M101
+  [*] Starting source data scan...
+  lights: 38/38 done                                        
+  darks: 20/20 done                                        
+  bias: 30/30 done                                      
+  [OK] Manifest created
+    - ID: 4a6c2c78-4ec5-4b9e-846b-a4a1aac20b1d
+    - File: 4a6c2c78-4ec5-4b9e-846b-a4a1aac20b1d.json
+    - lights: 38 files (Merkle: 67facef9ec8f...)
+    - darks: 20 files (Merkle: d614009d205b...)
+    - bias: 30 files (Merkle: 34ff15fb0d54...)
+  [INFO] The manifest records discovered files, not proof of their actual participation in the stack.
+```
+
+### Creating Frame Mapping (`mapping.py`)
+Siril renames and processes frames, making it difficult to track which original NINA frame corresponds to which processed file. This module uses FITS headers (`DATE-OBS`, `EXPTIME`, `OBJECT`) to match them. It safely handles frames that were rejected during stacking.
+
+```bash
+python -m astroprov.mapping "test_data/M101"
+```
+
+Expected Output:
+
+```text
+  [WARN] Frame mismatch: 38 originals, 37 processed.
+    Some frames may have been rejected by Siril.
+  [WARN] Missing frame: 2026-08-25_22-56-11__23.80_120.00s_0037.fits
+  [*] Backup saved: astroprov_frame_mapping.backup.json
+  [OK] Mapping updated: astroprov_frame_mapping.json
+    - Total originals: 38
+    - Successfully matched: 37
+    - Lost (rejected): 1
+  [OK] Source hashes verified.
+```
+
+### Generating Post-Stack Report (`processing.py`)
+Once stacking is complete, this module reads the `.seq` file and the final FITS header to cross-check frame counts. It then generates a comprehensive JSON report that links the sequence, the mapping, and the output FITS file. This report is what gets signed later.
+
+```bash
+python -m astroprov.processing "test_data/M101/process/r_pp_light_.seq" "test_data/M101/process/r_pp_light__stacked.fit" --mapping "test_data/M101/astroprov_frame_mapping.json"
+```
+
+Expected Output:
+
+```text
+  [OK] Post-stack report saved: processing-20261031T165717Z.json
+    - Output SHA-256: 061182fc64d31ba7...
+  [*] Sequence Summary:
+    - Total frames: 37
+    - Selected: 37
+    - Excluded: 0
+    - Excluded indices: []
+  [*] FITS Cross-check:
+    [OK] Frame count consistent with .seq
+  [*] Mapping Validation:
+    - Matched: 37/37
+    - Selected/Excluded: 37/0
+    - Consistent: False
+  [*] Pre-stack Link: Not linked
+  [WARN] Frame mapping validation found missing entries, hash mismatches, or other inconsistencies.
+```
+
+> *(Note: The `[WARN]` is expected here because the mapping contains 38 original frames, but Siril rejected 1 frame, resulting in 37 processed frames in the `.seq` file)*
+
+### Reading Raw Passport Data (`fits_prov.py`)
+This is a low-level utility to read the `PROVENANCE` HDU directly from a FITS file without needing external reports. It also recalculates the "pure data hash" (ignoring the passport HDU) to prove the image pixels haven't changed.
+
+```bash
+python -m astroprov.fits_prov "test_data/M101/process/r_pp_light__stacked.fit"
+```
+
+Expected Output:
+
+```text
+Reading passport from test_data/M101/process/r_pp_light__stacked.fit...
+
+Passport found:
+  version: 1.0
+  id: 33d5ddaf-a252-4f92-ad9c-92e4e17f0cd1
+  schema: astroprov-standalone-v1
+  merkle_root: 67facef9ec8fc924ef399659fc1744bbcfedced14111f83ef5d9e4474d2fcee9
+  date: 2026-10-31T16:22:48.916544+00:00
+  tool: AstroProv
+  lights_count: 38
+  darks_count: 0
+  biases_count: 0
+  flats_count: 0
+  exptime: 120.0
+  pubkey_fingerprint: 748201ad33df4602
+  report_hash: 5e58f404899eb7175aab3cc0bd7b6cd365cddd479d0db4d0e76697c46de0fd50
+  signature: e8aa53444466bac63f7d...0249308305 (length: 128)
+
+Computing the pure data hash (without passport)...
+  Data SHA-256: 061182fc64d31ba7444e7e49e813251de1e661cc45d7c0a4b76cef7c253547f5
+```
+
+### Verifying Integrity (`verify.py`)
+The verifier checks the FITS file structure, Ed25519 signatures, FreeTSA timestamps, and (depending on the passport type) the raw source data or pipeline reports. Its output adapts based on how the file was originally sealed.
+
+#### A. Standard / Standalone Verification
+Checks the FITS file itself and its signature. Use this if you only have the final FITS file and no raw sources or pipeline reports.
+
+```bash
+python -m astroprov.verify "test_data/_demo_seal.fit"
+```
+
+Expected Output:
+
+```text
+ASTROPROV FITS PROVENANCE VERIFICATION
+
+  [*] Output file: _demo_seal.fit
+  [*] Report: processing-standalone-52b6c7cd.json
+
+  [*] Verification Results:
+
+  [OK] Passport found in FITS. ID: standalone-52b6c7cd
+  [OK] Report type and stage verified
+  [OK] Standalone passport verified
+  [OK] JSON report hash matches the one recorded in FITS
+  [OK] Ed25519 signature is valid (FP: 498bccc54d73684b)
+  [OK] Trusted timestamp (RFC 3161) is valid
+  [OK] Output FITS (data without passport): SHA-256 matches
+
+  [OK] VERDICT: PASS — chain verified.
+       Integrity, consistency, and Ed25519 signature are all valid.
+```
+
+#### B. Deep Verification (Raw Sources)
+If you have the original raw frames and sealed them using `seal_collection`, pass the `--raw-dir` flag. The verifier recalculates the Merkle Tree of your raw lights, darks, and flats to ensure they haven't been modified.
+
+```bash
+python -m astroprov.verify "test_data/M101/process/r_pp_light__stacked.fit" --raw-dir "test_data/M101"
+```
+
+Expected Output:
+
+```text
+ASTROPROV FITS PROVENANCE VERIFICATION
+
+  [*] Output file: r_pp_light__stacked.fit
+  [*] Verifying raw source data in M101...
+  lights: 38/38 done                                        
+  darks: 20/20 done                                        
+  bias: 30/30 done                                      
+
+  [*] Report: processing-collection-061182fc.json
+
+  [*] Verification Results:
+
+  [OK] Passport found in FITS. ID: collection-061182fc
+  [OK] Report type and stage verified
+  [OK] Passport ID in FITS matches ID in JSON report
+  [OK] JSON report hash matches the one recorded in FITS
+  [OK] Ed25519 signature is valid (FP: 22d298b576b6728d)
+  [OK] Trusted timestamp (RFC 3161) is valid
+  [OK] Output FITS (data without passport): SHA-256 matches
+  [OK] [bias] Source data matches (30 files)
+  [OK] [darks] Source data matches (20 files)
+  [OK] [lights] Source data matches (38 files)
+
+  [OK] VERDICT: PASS — chain verified.
+       Integrity, consistency, and Ed25519 signature are all valid.
+```
+
+#### C. Pipeline Verification
+If the file was created via `full_auto_pipeline` or `auto_pipeline`, the verifier automatically checks `.seq`, mapping, and pre-stack reports. (The pipeline runs this automatically at the end, but you can run it manually later).
+
+```bash
+python -m astroprov.verify "test_data/M101/process/r_pp_light__stacked.fit"
+```
+
+Expected Output:
+
+```text
+ASTROPROV FITS PROVENANCE VERIFICATION
+
+  [*] Output file: r_pp_light__stacked.fit
+  Frame check: 37/37 done
+
+  [WARN] Processing report has warnings:
+    - Frame mapping validation found missing entries, hash mismatches, or other inconsistencies.
+
+  [*] Report: processing-20261031T171047Z.json
+
+  [*] Verification Results:
+
+  [OK] Passport found in FITS. ID: 291e256f-3ae6-4a83-8e71-7d1b0b030158
+  [OK] Report type and stage verified
+  [OK] Passport ID in FITS matches ID in JSON report
+  [OK] JSON report hash matches the one recorded in FITS
+  [OK] Ed25519 signature is valid (FP: 748201ad33df4602)
+  [OK] Trusted timestamp (RFC 3161) is valid
+  [OK] Output FITS (data without passport): SHA-256 matches
+  [OK] Sequence .seq: SHA-256 matches
+  [OK] Mapping: SHA-256 matches
+  [OK] Pre-stack report: SHA-256 matches
+  [OK] Pre-stack report has status validation_failed (expected when frames are rejected)
+  [OK] Pre-stack report link verified
+  [OK] Hashes of all 37 original/processed frame pairs verified
+  [OK] Frame selection is consistent: 37 selected, 0 excluded
+  [OK] FITS frame count consistent: 37
+  [OK] Mapping validation: only missing frames (expected)
+
+  [OK] VERDICT: PASS — chain verified.
+       Integrity, consistency, and Ed25519 signature are all valid.
+```
+
+### Viewing Human-Readable Passport (`inspect.py`)
+This tool extracts the `PROVENANCE` HDU and formats it into a clean, human-readable report. It includes the passport ID, Merkle roots, calibration frame counts, and total exposure time.
+
+```bash
+python -m astroprov.inspect "test_data/M101/process/r_pp_light__stacked.fit"
+```
+
+Expected Output:
+
+```text
+[*] ASTROPROV PASSPORT: r_pp_light__stacked.fit
+
+  [*] General Info:
+    - Passport ID:   33d5ddaf-a252-4f92-ad9c-92e4e17f0cd1
+    - Created:       2026-10-31T16:22:48.916544+00:00
+    - Tool:          AstroProv
+    - Format ver:    1.0
+
+  [*] Source Data Merkle Root:
+    - SHA-256:       67facef9ec8fc924ef399659fc1744bbcfedced14111f83ef5d9e4474d2fcee9
+
+  [*] Source Data Composition (FITS passport):
+    - Lights:  38
+    - Darks:   0
+    - Biases:  0
+    - Flats:   0
+    - Total:   38 files
+
+  [*] Exposure:
+    - Single frame:    120.0 s
+    - Frames in stack: 37
+    - Total:           1 h 14 min (4440 s)
+
+  [INFO] Integrity check: use `python -m astroprov.verify <file>`
+```
 
 ## Testing
 
