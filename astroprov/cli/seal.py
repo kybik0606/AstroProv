@@ -56,7 +56,7 @@ def seal_fits(
     if not fits_path.is_file():
         raise FileNotFoundError(f"File not found: {fits_path}")
 
-    print(f"\nSTANDALONE SEALING: {fits_path.name}\n")
+    print(f"\n[*] STANDALONE SEALING: {fits_path.name}\n")
 
     # 1. Resolve keys directory
     if keys_dir is None:
@@ -66,7 +66,7 @@ def seal_fits(
 
     signature.generate_keys(keys_dir)
     pubkey_fp = signature.get_public_key_fingerprint(keys_dir)
-    print(f"  Keys loaded/generated in {keys_dir} (FP: {pubkey_fp})")
+    print(f"  [OK] Keys loaded/generated (FP: {pubkey_fp})")
 
     # 2. Compute canonical data hash BEFORE embedding the passport
     data_hash = fits_prov.calculate_fits_data_hash(fits_path)
@@ -77,7 +77,7 @@ def seal_fits(
         
         if manual_lights is not None:
             lights_cnt = manual_lights
-            print(f"  Using manual lights count: {lights_cnt}")
+            print(f"  [*] Using manual lights count: {lights_cnt}")
         else:
             lights_cnt = (
                 _safe_int(hdr.get("STACKCNT")) or
@@ -88,7 +88,7 @@ def seal_fits(
 
         if manual_exptime is not None:
             exptime = manual_exptime
-            print(f"  Using manual exptime: {exptime}")
+            print(f"  [*] Using manual exptime: {exptime}")
         else:
             exptime = (
                 _safe_float(hdr.get("LUM_EXP")) or
@@ -99,9 +99,12 @@ def seal_fits(
         flats_cnt = _safe_int(hdr.get("LUM_FLAT")) or _safe_int(hdr.get("FLATCNT")) or 0
         biases_cnt = _safe_int(hdr.get("LUM_BIAS")) or _safe_int(hdr.get("BIASCNT")) or 0
 
-        print(f"  Auto-detected stats from header:")
-        print(f"    Lights: {lights_cnt}, Darks: {darks_cnt}, Flats: {flats_cnt}, Biases: {biases_cnt}")
-        print(f"    Single Exptime: {exptime}s")
+        print("  [*] Auto-detected stats from header:")
+        print(f"    - Lights: {lights_cnt}")
+        print(f"    - Darks: {darks_cnt}")
+        print(f"    - Flats: {flats_cnt}")
+        print(f"    - Biases: {biases_cnt}")
+        print(f"    - Single Exptime: {exptime}s")
 
     # 4. Create a synthetic report
     passport_id = f"standalone-{data_hash[:8]}"
@@ -127,14 +130,12 @@ def seal_fits(
 
     # --- FreeTSA Timestamp ---
     tsr_path = report_path.with_suffix(".tsr")
-    print("  Requesting trusted timestamp from FreeTSA...")
+    print("  [*] Requesting trusted timestamp from FreeTSA...")
     try:
-        # ИСПРАВЛЕНО: передаем байты, а не хэш
         timestamping.stamp_data(report_bytes, tsr_path)
-        print(f"  Timestamp saved: {tsr_path.name}")
+        print(f"    - Timestamp saved: {tsr_path.name}")
     except Exception as exc:
-        print(f"  [WARNING] Timestamping failed: {exc}")
-    # -------------------------
+        print(f"  [WARN] Timestamping failed: {exc}")
 
     # 5. Build canonical payload and sign
     sig_payload = {
@@ -152,7 +153,7 @@ def seal_fits(
     ).encode("utf-8")
     
     sig_hex = signature.sign_data(sig_bytes, keys_dir)
-    print(f"  Payload signed with Ed25519")
+    print("  [*] Signing report payload...")
 
     # 6. Embed the passport
     prov_data = {
@@ -161,6 +162,7 @@ def seal_fits(
         "merkle_root": data_hash,
         "date": report_data["created_utc"],
         "tool": "AstroProv-Standalone",
+        "schema": "astroprov-standalone-v1",
         "lights_count": lights_cnt,
         "darks_count": darks_cnt,
         "biases_count": biases_cnt,
@@ -172,10 +174,11 @@ def seal_fits(
     }
     
     fits_prov.write_provenance(fits_path, prov_data)
-    print(f"  Passport embedded successfully.\n")
-    print(f"  File: {fits_path}")
-    print(f"  ID:   {prov_data['id']}\n")
-    print("You can verify this file using: python -m astroprov.verify <file>")
+    print("  [OK] Passport embedded successfully.")
+    print(f"    - Report: {report_path.name}")
+    print(f"    - Passport FP: {pubkey_fp}")
+    print(f"\n  [OK] File ready: {fits_path.name}")
+    print(f'  [INFO] Verify with: python -m astroprov.verify "{fits_path}"')
 
 
 def main() -> int:
@@ -194,7 +197,7 @@ def main() -> int:
         seal_fits(args.fits, args.keys, args.object, args.lights, args.exptime)
         return 0
     except (OSError, ValueError, TypeError) as exc:
-        print(f"\nERROR: {exc}", file=sys.stderr)
+        print(f"\n  [FAIL] {exc}", file=sys.stderr)
         return 1
 
 

@@ -135,14 +135,14 @@ def snapshot_directory(object_dir: Path) -> dict:
 
         pbar = tqdm(
             total=total,
-            bar_format="{desc}",
+            bar_format="  {desc}", # <--- Отступ 2 пробела для прогресс-бара
             dynamic_ncols=True,
             disable=None,
         )
 
         for idx, path in enumerate(paths, 1):
             pbar.set_description_str(
-                f"  {category_name}: {idx}/{total} {path.name}",
+                f"{category_name}: {idx}/{total} {path.name}",
                 refresh=True,
             )
 
@@ -159,7 +159,7 @@ def snapshot_directory(object_dir: Path) -> dict:
             pbar.update(1)
 
         pbar.set_description_str(
-            f"  {category_name}: {total}/{total} done",
+            f"{category_name}: {total}/{total} done",
             refresh=True,
         )
         pbar.close()
@@ -197,8 +197,8 @@ def create_manifest(
 
     passport_id = str(uuid.uuid4())
 
-    print(f"  Object: {object_dir.name}")
-    print("  Starting source data scan...")
+    print(f"  [*] Object: {object_dir.name}")
+    print("  [*] Starting source data scan...")
 
     categories = snapshot_directory(object_dir)
 
@@ -232,18 +232,18 @@ def create_manifest(
         encoding="utf-8",
     )
 
-    print("\n  MANIFEST CREATED")
-    print(f"  ID: {passport_id}")
-    print(f"  File: {output}")
+    print("  [OK] Manifest created")
+    print(f"    - ID: {passport_id}")
+    print(f"    - File: {output.name}")
 
     for name, category in categories.items():
         print(
-            f"    {name}: {category['file_count']} files; "
-            f"Merkle root = {category['merkle_root']}"
+            f"    - {name}: {category['file_count']} files "
+            f"(Merkle: {category['merkle_root'][:12]}...)"
         )
 
     print(
-        "\n  Note: the manifest records discovered files, "
+        "  [INFO] The manifest records discovered files, "
         "not proof of their actual participation in the stack."
     )
 

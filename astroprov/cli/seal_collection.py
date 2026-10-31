@@ -56,8 +56,8 @@ def seal_collection(
     if not raw_dir.is_dir():
         raise NotADirectoryError(f"Raw directory not found: {raw_dir}")
 
-    print(f"\nUNIVERSAL SEALING: {fits_path.name}\n")
-    print(f"  Scanning raw data from: {raw_dir.name}")
+    print(f"\n[*] UNIVERSAL SEALING: {fits_path.name}\n")
+    print(f"  [*] Scanning raw data from: {raw_dir.name}")
 
     # 1. Resolve keys directory
     if keys_dir is None:
@@ -67,7 +67,7 @@ def seal_collection(
 
     signature.generate_keys(keys_dir)
     pubkey_fp = signature.get_public_key_fingerprint(keys_dir)
-    print(f"  Keys loaded/generated in {keys_dir} (FP: {pubkey_fp})")
+    print(f"  [OK] Keys loaded/generated (FP: {pubkey_fp})")
 
     # 2. Compute canonical data hash BEFORE embedding the passport
     data_hash = fits_prov.calculate_fits_data_hash(fits_path)
@@ -96,8 +96,8 @@ def seal_collection(
     # Cross-check lights count
     raw_lights = categories.get("lights", {}).get("file_count", 0)
     if fits_lights > 0 and raw_lights > 0 and fits_lights != raw_lights:
-        print(f"  [INFO] FITS header says {fits_lights} lights, but {raw_lights} raw files found.")
-        print("         Some frames may have been rejected by the stacking software.")
+        print(f"  [WARN] FITS header says {fits_lights} lights, but {raw_lights} raw files found.")
+        print("    Some frames may have been rejected by the stacking software.")
 
     # 5. Create a collection report
     passport_id = f"collection-{data_hash[:8]}"
@@ -132,12 +132,12 @@ def seal_collection(
 
     # 6. Timestamp
     tsr_path = report_path.with_suffix(".tsr")
-    print("  Requesting trusted timestamp from FreeTSA...")
+    print("  [*] Requesting trusted timestamp from FreeTSA...")
     try:
         timestamping.stamp_data(report_bytes, tsr_path)
-        print(f"  Timestamp saved: {tsr_path.name}")
+        print(f"    - Timestamp saved: {tsr_path.name}")
     except Exception as exc:
-        print(f"  [WARNING] Timestamping failed: {exc}")
+        print(f"  [WARN] Timestamping failed: {exc}")
 
     # 7. Build payload and sign
     sig_payload = {
@@ -155,7 +155,7 @@ def seal_collection(
     ).encode("utf-8")
     
     sig_hex = signature.sign_data(sig_bytes, keys_dir)
-    print(f"  Payload signed with Ed25519")
+    print("  [*] Signing report payload...")
 
     # 8. Embed passport
     prov_data = {
@@ -176,10 +176,11 @@ def seal_collection(
     }
     
     fits_prov.write_provenance(fits_path, prov_data)
-    print(f"  Passport embedded successfully.\n")
-    print(f"  File: {fits_path}")
-    print(f"  ID:   {prov_data['id']}\n")
-    print(f"To fully verify source data, run: python -m astroprov.verify <file> --raw-dir {raw_dir}")
+    print("  [OK] Passport embedded successfully.")
+    print(f"    - Report: {report_path.name}")
+    print(f"    - Passport FP: {pubkey_fp}")
+    print(f"\n  [OK] File ready: {fits_path.name}")
+    print(f'  [INFO] Deep verify with: python -m astroprov.verify "{fits_path}" --raw-dir "{raw_dir}"')
 
 
 def main() -> int:
@@ -197,7 +198,7 @@ def main() -> int:
         seal_collection(args.fits, args.raw, args.keys, args.object)
         return 0
     except (OSError, ValueError, TypeError) as exc:
-        print(f"\nERROR: {exc}", file=sys.stderr)
+        print(f"\n  [FAIL] {exc}", file=sys.stderr)
         return 1
 
 
