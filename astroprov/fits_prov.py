@@ -39,6 +39,7 @@ def write_provenance(fits_path: Path | str, prov_data: dict) -> None:
         # Main data
         hdu.header["PROVVER"] = (str(prov_data.get("version", "1.0")), "")
         hdu.header["PROVID"] = (str(prov_data.get("id", "")), "")
+        hdu.header["PROVTYPE"] = (str(prov_data.get("schema", "astroprov-standalone-v1")), "")
         hdu.header["PROVMRKL"] = (str(prov_data.get("merkle_root", "")), "")
         hdu.header["PROVDATE"] = (str(prov_data.get("date", "")), "")
         hdu.header["PROVTOOL"] = (str(prov_data.get("tool", "AstroProv")), "")
@@ -88,6 +89,7 @@ def read_provenance(fits_path: Path | str) -> dict | None:
         return {
             "version": header.get("PROVVER"),
             "id": header.get("PROVID"),
+            "schema": header.get("PROVTYPE"), # Изменено здесь
             "merkle_root": header.get("PROVMRKL"),
             "date": header.get("PROVDATE"),
             "tool": header.get("PROVTOOL"),

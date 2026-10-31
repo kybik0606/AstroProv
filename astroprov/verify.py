@@ -28,7 +28,7 @@ from pathlib import Path
 from astropy.io import fits
 from tqdm import tqdm
 
-from astroprov import signature, fits_prov, timestamping
+from astroprov import signature, fits_prov, timestamping, snapshot
 from astroprov.utils import sha256_file
 
 
@@ -104,6 +104,7 @@ def _read_fits_passport(output: Path, verifier: Verification) -> dict:
         "biases": None,
         "flats": None,
         "exptime": None,
+        "schema": None,
     }
 
     try:
@@ -116,6 +117,7 @@ def _read_fits_passport(output: Path, verifier: Verification) -> dict:
 
             hdr = hdul["PROVENANCE"].header
             passport["id"] = hdr.get("PROVID")
+            passport["schema"] = hdr.get("PROVTYPE")
             passport["report_hash"] = hdr.get("PROVHASH")
             passport["pubkey_fp"] = hdr.get("PROVPUBK")
             passport["merkle_root"] = hdr.get("PROVMRKL")
@@ -138,12 +140,14 @@ def _read_fits_passport(output: Path, verifier: Verification) -> dict:
 
 
 def _find_report(output: Path) -> Path:
+    matches: list[Path] = []
+    
+    # Ищем отчеты в корне проекта (M101/.astroprov) и рядом с файлом (M101/process/.astroprov)
     for root in (output.parent.parent, output.parent):
         runs_dir = root / ".astroprov" / "runs"
         if not runs_dir.is_dir():
             continue
 
-        matches: list[Path] = []
         for candidate in runs_dir.glob("processing-*.json"):
             try:
                 report = read_json(candidate)
@@ -153,10 +157,11 @@ def _find_report(output: Path) -> Path:
             except (OSError, ValueError, TypeError):
                 continue
 
-        if matches:
-            return max(matches, key=lambda p: p.stat().st_mtime)
+    if not matches:
+        raise FileNotFoundError(f"No processing report found for {output}")
 
-    raise FileNotFoundError(f"No processing report found for {output}")
+    # Возвращаем САМЫЙ СВЕЖИЙ отчет (по времени изменения файла)
+    return max(matches, key=lambda p: p.stat().st_mtime)
 
 
 def _verify_signature(
@@ -226,7 +231,6 @@ def _verify_timestamp(
         return
 
     try:
-        # ИСПРАВЛЕНО: передаем байты отчета и вызываем verify_data
         report_bytes = report_path.read_bytes()
         if timestamping.verify_data(report_bytes, tsr_path):
             verifier.ok("Trusted timestamp (RFC 3161) is valid")
@@ -234,6 +238,37 @@ def _verify_timestamp(
             verifier.fail("Trusted timestamp (RFC 3161) is INVALID!")
     except Exception as exc:
         verifier.fail(f"Error verifying timestamp: {exc}")
+
+
+def _verify_source_data(
+    report: dict,
+    raw_dir: Path,
+    verifier: Verification,
+) -> None:
+    """Verify that raw source files match the Merkle roots in the report."""
+    print(f"\n[*] Verifying raw source data in {raw_dir}...")
+    if not raw_dir.is_dir():
+        verifier.fail(f"Raw directory not found: {raw_dir}")
+        return
+
+    try:
+        categories = snapshot.snapshot_directory(raw_dir)
+    except Exception as exc:
+        verifier.fail(f"Failed to scan raw directory: {exc}")
+        return
+
+    source_data = report.get("source_data", {})
+    
+    for cat_name, expected_data in source_data.items():
+        actual = categories.get(cat_name)
+        if not actual:
+            verifier.fail(f"Category '{cat_name}' missing from raw directory.")
+            continue
+        
+        if actual["merkle_root"] != expected_data["merkle_root"]:
+            verifier.fail(f"[{cat_name}] Merkle root mismatch! Source files were modified.")
+        else:
+            verifier.ok(f"[{cat_name}] Source data matches ({actual['file_count']} files)")
 
 
 def _verify_mapping_frames(
@@ -500,6 +535,7 @@ def _verify_pipeline_artifacts(
 def verify_output(
     output_arg: str | Path,
     report_arg: str | Path | None = None,
+    raw_dir_arg: str | Path | None = None,
 ) -> int:
     """Verify the full provenance chain for a stacked output FITS."""
     verifier = Verification()
@@ -524,24 +560,26 @@ def verify_output(
 
         schema = report.get("schema")
         is_standalone = schema == "astroprov-standalone-v1"
+        is_collection = schema == "astroprov-collection-v1"
 
         if schema not in (
             "astroprov-processing-v2",
             "astroprov-standalone-v1",
+            "astroprov-collection-v1",
         ):
             verifier.fail("Unknown processing report schema")
-        elif not is_standalone and report.get("stage") != "post-stack":
+        elif not (is_standalone or is_collection) and report.get("stage") != "post-stack":
             verifier.fail("Report is not for the post-stack stage")
         else:
             verifier.ok("Report type and stage verified")
 
             if not is_standalone:
                 report_prov_id = report.get("passport_id")
-                if not report_prov_id:
+                if not report_prov_id and not is_collection:
                     verifier.fail(
                         "JSON report is missing passport_id for comparison."
                     )
-                elif passport["id"] != report_prov_id:
+                elif not is_collection and passport["id"] != report_prov_id:
                     verifier.fail(
                         f"Passport ID mismatch! FITS: {passport['id']}, "
                         f"JSON: {report_prov_id}"
@@ -583,8 +621,11 @@ def verify_output(
         else:
             verifier.fail("Report is missing the output FITS SHA-256")
 
-        if not is_standalone:
+        if not (is_standalone or is_collection):
             _verify_pipeline_artifacts(report, output, verifier)
+            
+        if is_collection and raw_dir_arg:
+            _verify_source_data(report, Path(raw_dir_arg).resolve(), verifier)
 
         if report.get("warnings"):
             print("\n[INFO] Processing report has warnings:")
@@ -631,8 +672,12 @@ def main() -> int:
         "--report",
         help="Explicit processing report path; otherwise auto-detected",
     )
+    parser.add_argument(
+        "--raw-dir",
+        help="Optional path to raw source folder for deep verification",
+    )
     args = parser.parse_args()
-    return verify_output(args.output_fits, args.report)
+    return verify_output(args.output_fits, args.report, args.raw_dir)
 
 
 if __name__ == "__main__":
