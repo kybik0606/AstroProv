@@ -52,7 +52,14 @@ def _safe_exptime(fits_path: Path) -> float:
         return 0.0
 
 
-def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path) -> int:
+def run_full_auto_pipeline(
+    object_dir: Path, 
+    siril_cli_exe: Path, 
+    siril_script: Path,
+    rej_sigma: float = 3,
+    rej_iters: int = 3,
+    normalize: bool = False
+) -> int:
     object_dir = object_dir.resolve()
     print(f"\nASTROPROV FULL AUTO PIPELINE: {object_dir.name}\n")
 
@@ -136,10 +143,13 @@ def run_full_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: 
     stack_script_path = process_dir / "_stack_full_auto.ssf"
     output_fits_name = f"{seq_name}_stacked"
     
-    stack_cmd = f"stack {seq_name} rej 3 3 -nonorm -filter-included -out={output_fits_name}"
+    # Build the stacking command considering CLI arguments
+    norm_flag = "" if normalize else "-nonorm"
+    stack_cmd = f"stack {seq_name} rej {rej_sigma} {rej_iters} {norm_flag} -filter-included -out={output_fits_name}"
     print("  [*] Preparing stacking sequence...")
     print(f"    - Parameters: {stack_cmd}")
 
+    # Generate Siril stacking script
     stack_script_content = f"""requires 1.2.0
 cd process
 {stack_cmd}
@@ -152,13 +162,20 @@ cd ..
     if stack_script_path.exists():
         stack_script_path.unlink()
 
-    fits_files = list(process_dir.glob("*.fit"))
-    stack_files = [f for f in fits_files if "stacked" in f.stem.lower() or "result" in f.stem.lower()]
+    # Improved final FITS file discovery
+    fits_files = list(process_dir.glob("*.fit")) + list(process_dir.glob("*.fits"))
+    expected_names = {f"{output_fits_name}.fit", f"{output_fits_name}.fits"}
     
-    if not stack_files:
-        raise FileNotFoundError("Final stacked FITS file not found in process directory.")
+    exact_matches = [f for f in fits_files if f.name.lower() in expected_names]
     
-    output_fits = max(stack_files, key=lambda p: p.stat().st_mtime)
+    if exact_matches:
+        output_fits = max(exact_matches, key=lambda p: p.stat().st_mtime)
+    else:
+        stack_files = [f for f in fits_files if "stacked" in f.stem.lower() or "result" in f.stem.lower()]
+        if not stack_files:
+            raise FileNotFoundError("Final stacked FITS file not found in process directory.")
+        output_fits = max(stack_files, key=lambda p: p.stat().st_mtime)
+        
     print(f"  [OK] Found final FITS: {output_fits.name}")
 
     try:
@@ -240,34 +257,37 @@ cd ..
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="AstroProv Full Auto Pipeline (no manual selection).")
-    parser.add_argument("object_dir", type=Path, help="Object directory (e.g., NGC5906)")
-    parser.add_argument("--script", type=Path, required=True, help="Path to Siril .ssf calibration script")
-    parser.add_argument(
-        "--siril-cli", 
-        type=Path, 
-        default=None,
-        help="Path to siril-cli. If not provided, uses SIRIL_CLI_PATH or system PATH."
+    parser = argparse.ArgumentParser(
+        description="AstroProv Full Auto Pipeline.",
+        formatter_class=lambda prog: argparse.HelpFormatter(prog, max_help_position=28),
     )
-    
+    parser.add_argument("object_dir", type=Path, help="Object directory (e.g., NGC5906)")
+    parser.add_argument("--script", type=Path, required=True, help="Path to Siril .ssf script")
+    parser.add_argument("--siril-cli", type=Path, metavar="PATH", help="Path to siril-cli")
+    parser.add_argument("--rej-sigma", type=float, default=3, metavar="N", help="Sigma rejection (default: 3)")
+    parser.add_argument("--rej-iters", type=int, default=3, metavar="N", help="Rejection iterations (default: 3)")
+    parser.add_argument("--normalize", action="store_true", help="Enable normalization")
+
     args = parser.parse_args()
 
     if not args.object_dir.is_dir():
         print(f"[FAIL] {args.object_dir} is not a directory.")
         return 1
-        
     if not args.script.is_file():
         print(f"[FAIL] Script {args.script} not found.")
         return 1
 
     try:
         siril_exe = find_siril_cli(args.siril_cli)
-        exit_code = run_full_auto_pipeline(args.object_dir, siril_exe, args.script)
-        return exit_code
+        return run_full_auto_pipeline(
+            args.object_dir, siril_exe, args.script,
+            rej_sigma=args.rej_sigma,
+            rej_iters=args.rej_iters,
+            normalize=args.normalize,
+        )
     except (OSError, ValueError, RuntimeError) as exc:
         print(f"\n[FAIL] PIPELINE FAILED: {exc}")
         return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())
