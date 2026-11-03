@@ -92,7 +92,15 @@ def _extract_source_stats(manifest_data: dict, script_calib: dict) -> dict:
 
 def _find_final_fits(process_dir: Path, expected_stem: str) -> Path:
     """Find the stacked FITS file produced by Siril."""
-    fits_files = list(process_dir.glob("*.fit")) + list(process_dir.glob("*.fits"))
+    if not process_dir.is_dir():
+        raise FileNotFoundError(f"Directory not found: {process_dir}")
+
+    # Collect all FITS files regardless of extension case (.fit, .fits, .FIT, .Fits)
+    fits_files = [
+        f for f in process_dir.iterdir()
+        if f.is_file() and f.suffix.lower() in (".fit", ".fits")
+    ]
+    
     expected_names = {f"{expected_stem}.fit", f"{expected_stem}.fits"}
 
     exact = [f for f in fits_files if f.name.lower() in expected_names]
@@ -105,6 +113,7 @@ def _find_final_fits(process_dir: Path, expected_stem: str) -> Path:
     ]
     if not fallback:
         raise FileNotFoundError(f"Final stacked FITS not found in {process_dir}")
+        
     return max(fallback, key=lambda p: p.stat().st_mtime)
 
 
