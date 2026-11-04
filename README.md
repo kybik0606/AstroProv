@@ -47,7 +47,7 @@ AstroProv is built around a chain of trust:
 *   `astroprov/inspect.py`: A human-readable CLI to view the passport inside a FITS file.
 *   `astroprov/siril_wrapper.py`: Shared wrapper for locating and executing the Siril CLI (prevents code duplication).
 *   `astroprov/timestamping.py`: Handles RFC 3161 Time Stamping Authority (TSA) requests and offline verification.
-*   `astroprov/cli/`: Command-line tools (pipelines orchestrating Siril and standalone sealing).
+*   `astroprov/cli/`: Command-line tools (unified pipeline orchestrating Siril, and standalone sealing).
 
 ## Installation
 
@@ -69,7 +69,11 @@ venv\Scripts\activate
 # On Linux:
 source venv/bin/activate
 
+# For regular usage (sealing, verifying):
 pip install -r requirements.txt
+
+# For developers (includes pytest for testing):
+pip install -r requirements-dev.txt
 ```
 
 ## Usage
@@ -79,17 +83,17 @@ AstroProv provides four main workflows:
 > *Note on Siril CLI: By default, the pipeline automatically searches for `siril-cli` in your system `PATH`. If it is installed in a custom location, you can specify it using the `--siril-cli /path/to/siril-cli` argument.*
 
 ### 1. Full Auto Pipeline (No manual intervention)
-This mode automatically calibrates, stacks all available frames, seals, and verifies the data.
+This mode automatically calibrates, stacks all available frames, seals, and verifies the data. You can also customize the stacking parameters (e.g., `--rej-sigma 5 --rej-iters 2 --normalize`).
 
 ```bash
-python -m astroprov.cli.full_auto_pipeline M101 --script "siril_scripts/OSC_Preprocessing_AstroProv_WithoutDBF.ssf"
+python -m astroprov.cli.pipeline M101 --script "siril_scripts/OSC_Preprocessing_AstroProv_WithoutDBF.ssf"
 ```
 
 ### 2. Semi-Auto Pipeline (Manual Quality Control)
-This mode pauses after calibration, allowing you to open Siril (GUI), manually reject bad frames (e.g., clouds, satellites), and then resume stacking.
+This mode pauses after calibration (via the `--manual` flag), allowing you to open Siril (GUI), manually reject bad frames (e.g., clouds, satellites), and then resume stacking.
 
 ```bash
-python -m astroprov.cli.auto_pipeline M101 --script "siril_scripts/OSC_Preprocessing_AstroProv_WithoutDBF.ssf"
+python -m astroprov.cli.pipeline M101 --script "siril_scripts/OSC_Preprocessing_AstroProv_WithoutDBF.ssf" --manual
 ```
 
 ### 3. Standalone Sealing (Single FITS file)
@@ -371,14 +375,14 @@ The project includes automated tests for both standard pipeline execution and se
 To run the predefined end-to-end tests, place your test object directories inside a `test_data/` folder in the project root (e.g., `test_data/M101`). This folder is ignored by Git to prevent committing large FITS files.
 
 ```bash
-# Run end-to-end pipeline tests (4 scenarios with benchmarking)
+# Run fast unit tests for the unified pipeline (no Siril required)
+pytest tests/test_pipeline.py -v
+
+# Run end-to-end pipeline tests (6 scenarios: auto, custom params, and manual)
 python tests/run_all_tests.py
 
 # Run tamper-resistance tests against a generated FITS file (A2)
 python tests/run_security_tests.py "test_data/M101/process/r_pp_light__stacked.fit"
-
-# You can also run tamper-resistance tests on standalone sealed files
-python tests/run_security_tests.py "test_data/result.fit"
 ```
 
 ## The "Chicken and Egg" Solution
