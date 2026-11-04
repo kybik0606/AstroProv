@@ -1,6 +1,7 @@
 # Python cache
 __pycache__/
 *.py[cod]
+.pytest_cache/
 
 # Virtual environments
 venv/
@@ -11,6 +12,9 @@ test_data/
 
 # IDE
 .vscode/
+
+# OS generated files
+Thumbs.db
 
 # Secrets and private keys
 .astroprov/keys/
