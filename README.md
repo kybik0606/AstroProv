@@ -104,10 +104,10 @@ python -m astroprov.cli.seal "path/to/your/image.fits" --object "M31"
 ```
 
 ### 4. Universal Collection Sealing (FITS + Raw Sources)
-If you processed your data in third-party software but want to cryptographically link your final stack to the original raw frames, use this mode. It builds a Merkle Tree of your raw lights, darks, and flats, and embeds it into the passport.
+If you processed your data in third-party software but want to cryptographically link your final stack to the original raw frames, use the `--raw` flag with the standard sealing command. It builds a Merkle Tree of your raw lights, darks, and flats, and embeds it into the passport.
 
 ```bash
-python -m astroprov.cli.seal_collection "path/to/your/stack.fit" --raw "path/to/raw_folder" --object "M31"
+python -m astroprov.cli.seal "path/to/your/stack.fit" --raw "path/to/raw_folder" --object "M31"
 ```
 
 ## Detailed CLI Reference
@@ -253,7 +253,7 @@ ASTROPROV FITS PROVENANCE VERIFICATION
 ```
 
 #### B. Deep Verification (Raw Sources)
-If you have the original raw frames and sealed them using `seal_collection`, pass the `--raw-dir` flag. The verifier recalculates the Merkle Tree of your raw lights, darks, and flats to ensure they haven't been modified.
+If you have the original raw frames and sealed them using `seal --raw`, pass the `--raw-dir` flag to `verify`. The verifier recalculates the Merkle Tree of your raw lights, darks, and flats to ensure they haven't been modified.
 
 ```bash
 python -m astroprov.verify "test_data/M101/process/r_pp_light__stacked.fit" --raw-dir "test_data/M101"
@@ -370,16 +370,19 @@ Expected Output:
 
 ## Testing
 
-The project includes automated tests for both standard pipeline execution and security (tamper-resistance). All core modules have been tested in isolation, and the full suite runs successfully on both Windows and Linux. Test execution times are benchmarked to help identify performance bottlenecks.
+The project includes automated tests for pipeline execution, unified sealing, and security (tamper-resistance). All core modules have been tested in isolation, and the full suite runs successfully on both Windows and Linux. Test execution times are benchmarked to help identify performance bottlenecks.
 
 To run the predefined end-to-end tests, place your test object directories inside a `test_data/` folder in the project root (e.g., `test_data/M101`). This folder is ignored by Git to prevent committing large FITS files.
 
 ```bash
-# Run fast unit tests for the unified pipeline (no Siril required)
-pytest tests/test_pipeline.py -v
+# Run fast unit tests for the pipeline and seal modules (no Siril required)
+pytest tests/test_pipeline.py tests/test_seal.py -v
 
 # Run end-to-end pipeline tests (6 scenarios: auto, custom params, and manual)
-python tests/run_all_tests.py
+python tests/run_pipeline_tests.py
+
+# Run end-to-end sealing tests (standalone and collection modes)
+python tests/run_seal_tests.py
 
 # Run tamper-resistance tests against a generated FITS file (A2)
 python tests/run_security_tests.py "test_data/M101/process/r_pp_light__stacked.fit"
@@ -405,7 +408,7 @@ In version 1.3.0, the codebase underwent a comprehensive security and architectu
 
 *   **CLI Exit Codes:** Fixed a critical bug where `verify.py` always returned exit code `0` (success) even on failure. Now, all CLIs correctly return `0` (PASS) or `1` (FAIL), making them safe to use in automated CI/CD pipelines.
 *   **Path Traversal Protection:** Added strict validation in `verify.py` and `processing.py` to ensure recorded paths in JSON reports cannot escape the project directory (preventing arbitrary file read vulnerabilities).
-*   **Safe FITS Parsing:** Introduced `_safe_int` and `_safe_float` helpers in `inspect.py` and `seal.py`. Malformed or malicious FITS headers (e.g., `EXPTIME = "unknown"`) will no longer crash the application; they are handled gracefully with `[NO DATA]` messages.
+*   **Safe FITS Parsing:** Introduced `safe_int` and `safe_float` helpers in `utils.py`. Malformed or malicious FITS headers (e.g., `EXPTIME = "unknown"`) will no longer crash the application; they are handled gracefully.
 *   **Strict Error Handling:** Removed broad `except Exception` blocks across the codebase. Specific exceptions (`OSError`, `ValueError`, `RuntimeError`) are now caught and propagated correctly.
 *   **Private Key Protection:** The private Ed25519 key is explicitly restricted to `chmod 600` (owner read/write only) upon generation on Unix-like systems.
 *   **Tamper-Test Verified:** A dedicated test suite (`tests/run_security_tests.py`) asserts that tampering with any of the 7 passport header fields instantly triggers a `FAIL` verdict.

@@ -31,5 +31,8 @@ document the evolution of the project. They are not included in the
 *   **`compare_fits.py`**: A basic debugging utility to inspect and print
     the HDU structure and headers of FITS files.
 
+*   **`seal_collection.py`**: Early CLI for sealing a FITS file with raw source data. 
+    Replaced by `astroprov/cli/seal.py --raw <dir>` (unified with standalone sealing).
+
 *Please use the modules inside the `astroprov/` folder for all current
 operations.*

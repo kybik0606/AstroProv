@@ -33,3 +33,19 @@ def sha256_file(path: Path | str) -> str:
             digest.update(chunk)
 
     return digest.hexdigest()
+
+
+def safe_int(value: object) -> int | None:
+    """Convert a value to int, or return None if impossible."""
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def safe_float(value: object) -> float | None:
+    """Convert a value to float, or return None if impossible."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None

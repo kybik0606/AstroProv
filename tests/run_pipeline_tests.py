@@ -42,7 +42,7 @@ from astroprov import fits_prov
 
 TESTS = [
     {
-        "name": "M101 auto default",
+        "name": "[Pipeline] M101 auto default",
         "object_dir": "test_data/M101",
         "script": "siril_scripts/OSC_Preprocessing_AstroProv_WithoutFlat.ssf",
         "mode": "auto",
@@ -53,7 +53,7 @@ TESTS = [
         },
     },
     {
-        "name": "M101 auto custom",
+        "name": "[Pipeline] M101 auto custom",
         "object_dir": "test_data/M101",
         "script": "siril_scripts/OSC_Preprocessing_AstroProv_WithoutFlat.ssf",
         "mode": "custom",
@@ -65,7 +65,7 @@ TESTS = [
         },
     },
     {
-        "name": "M101 manual",
+        "name": "[Pipeline] M101 manual",
         "object_dir": "test_data/M101",
         "script": "siril_scripts/OSC_Preprocessing_AstroProv_WithoutFlat.ssf",
         "mode": "manual",
@@ -76,7 +76,7 @@ TESTS = [
         },
     },
     {
-        "name": "SN 2026sqf auto default",
+        "name": "[Pipeline] SN 2026sqf auto default",
         "object_dir": "test_data/SN 2026sqf",
         "script": "siril_scripts/Mono_Preprocessing_AstroProv_WithoutFlat.ssf",
         "mode": "auto",
@@ -87,7 +87,7 @@ TESTS = [
         },
     },
     {
-        "name": "SN 2026sqf auto custom",
+        "name": "[Pipeline] SN 2026sqf auto custom",
         "object_dir": "test_data/SN 2026sqf",
         "script": "siril_scripts/Mono_Preprocessing_AstroProv_WithoutFlat.ssf",
         "mode": "custom",
@@ -99,7 +99,7 @@ TESTS = [
         },
     },
     {
-        "name": "SN 2026sqf manual",
+        "name": "[Pipeline] SN 2026sqf manual",
         "object_dir": "test_data/SN 2026sqf",
         "script": "siril_scripts/Mono_Preprocessing_AstroProv_WithoutFlat.ssf",
         "mode": "manual",

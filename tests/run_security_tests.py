@@ -70,7 +70,7 @@ def run_verify(fits_path: Path, verbose: bool = False) -> tuple[bool, str]:
     
     if verbose:
         print(f"      [debug] verify exit code: {result.returncode}")
-        # Выводим только строки, относящиеся к подписи или паспорту
+        # Print only lines related to signature or passport
         for line in output.splitlines():
             if any(kw in line for kw in ("[OK]", "[FAIL]", "VERDICT", "Passport")):
                 print(f"      [debug] {line}")
@@ -85,11 +85,11 @@ def mutate_fits(fits_path: Path, key: str, value) -> None:
         hdul.flush()
 
 
-def test_field(fits_path: Path, key: str, label: str, value, verbose: bool = False) -> tuple[bool, str]:
+def test_field(fits_path: Path, key: str, value, verbose: bool = False) -> tuple[bool, str]:
     """Run one tamper scenario. Returns (ok, message)."""
     backup = fits_path.with_suffix(fits_path.suffix + ".sec_bak")
     
-    # Создаем бэкап перед началом
+    # Create a backup before starting
     shutil.copy2(fits_path, backup)
     
     try:
@@ -162,7 +162,7 @@ def main() -> int:
 
     for key, label, value in TAMPER_TARGETS:
         print(f"[*] Tampering {key} ({label}) -> {value!r} ...")
-        ok, msg = test_field(fits_path, key, label, value, verbose=args.verbose)
+        ok, msg = test_field(fits_path, key, value, verbose=args.verbose)
         status = "PASS" if ok else "FAIL"
         print(f"    [{status}] {msg}\n")
         results.append((key, label, ok, msg))
