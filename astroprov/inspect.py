@@ -26,9 +26,6 @@ from astropy.io import fits
 from astroprov import fits_prov
 
 
-SEP = "=" * 60
-
-
 def find_manifest_by_id(object_dir: Path | str, passport_id: str) -> Path | None:
     """Find the JSON manifest by its ID in the hidden .astroprov folder."""
     object_dir = Path(object_dir).resolve()
@@ -85,31 +82,29 @@ def _print_composition(
     source: str,
 ) -> None:
     """Print the source data composition block."""
-    print(f"\nSOURCE DATA COMPOSITION ({source})")
-    print(f"  Lights:     {lights}")
-    print(f"  Darks:      {darks}")
-    print(f"  Biases:     {biases}")
-    print(f"  Flats:      {flats}")
+    print(f"  [*] Source Data Composition ({source}):")
+    print(f"    - Lights:  {lights}")
+    print(f"    - Darks:   {darks}")
+    print(f"    - Biases:  {biases}")
+    print(f"    - Flats:   {flats}")
     total = lights + darks + biases + flats
-    print(f"  {'Total:':<12} {total} files")
+    print(f"    - Total:   {total} files")
 
 
 def inspect_fits(fits_path: Path | str) -> int:
     """Read the passport from FITS, find the manifest and print a report."""
     fits_path = Path(fits_path).resolve()
 
-    print(f"\n{SEP}")
-    print(f"ASTROPROV PASSPORT: {fits_path.name}")
-    print(f"{SEP}\n")
+    print(f"\n[*] ASTROPROV PASSPORT: {fits_path.name}\n")
 
     if not fits_path.is_file():
-        print(f"ERROR: file not found: {fits_path}")
+        print(f"  [FAIL] File not found: {fits_path}")
         return 1
 
     prov = fits_prov.read_provenance(fits_path)
 
     if prov is None:
-        print("ERROR: this FITS file has no passport (HDU 'PROVENANCE').")
+        print("  [FAIL] This FITS file has no passport (HDU 'PROVENANCE').")
         return 1
 
     passport_id = prov.get("id")
@@ -122,7 +117,7 @@ def inspect_fits(fits_path: Path | str) -> int:
             exptime_hdr = header.get("EXPTIME")
             stack_count = header.get("STACKCNT") or header.get("NCOMBINE")
     except (OSError, ValueError, TypeError, KeyError) as exc:
-        print(f"[WARNING] Could not read FITS header: {exc}")
+        print(f"  [WARN] Could not read FITS header: {exc}")
 
     # Backward compatibility: older layouts have the manifest one level up.
     manifest_path = None
@@ -131,16 +126,17 @@ def inspect_fits(fits_path: Path | str) -> int:
         if manifest_path is None:
             manifest_path = find_manifest_by_id(fits_path.parent, passport_id)
 
-    print("GENERAL INFO")
-    print(f"  Passport ID:      {passport_id or '—'}")
-    print(f"  Created:          {prov.get('date', '—')}")
-    print(f"  Format version:   {prov.get('version', '—')}")
-    print(f"  Tool:             {prov.get('tool', '—')}")
+    print("  [*] General Info:")
+    print(f"    - Passport ID:   {passport_id or '—'}")
+    print(f"    - Created:       {prov.get('date', '—')}")
+    print(f"    - Tool:          {prov.get('tool', '—')}")
+    print(f"    - Format ver:    {prov.get('version', '—')}")
 
-    print("\nSOURCE DATA MERKLE ROOT (SHA-256)")
-    print(f"  {prov.get('merkle_root', '—')}")
+    print("\n  [*] Source Data Merkle Root:")
+    print(f"    - SHA-256:       {prov.get('merkle_root', '—')}")
 
     lights_cnt = prov.get("lights_count")
+    print("")
 
     if lights_cnt is not None:
         _print_composition(
@@ -148,7 +144,7 @@ def inspect_fits(fits_path: Path | str) -> int:
             darks=_safe_int(prov.get("darks_count")) or 0,
             biases=_safe_int(prov.get("biases_count")) or 0,
             flats=_safe_int(prov.get("flats_count")) or 0,
-            source="from FITS passport",
+            source="FITS passport",
         )
     elif manifest_path is not None:
         try:
@@ -168,22 +164,24 @@ def inspect_fits(fits_path: Path | str) -> int:
                 darks=m_darks,
                 biases=m_biases,
                 flats=m_flats,
-                source="from manifest, legacy format",
+                source="manifest, legacy format",
             )
             lights_cnt = m_lights
         except (OSError, ValueError, TypeError, KeyError) as exc:
-            print(f"\n  [WARNING] Could not read manifest: {exc}")
+            print(f"  [WARN] Could not read manifest: {exc}")
     else:
-        print("\nSOURCE DATA COMPOSITION")
-        print("  [NO DATA] This FITS has no statistics, and the manifest was not found.")
+        print("  [*] Source Data Composition:")
+        print("    - [NO DATA] This FITS has no statistics, and the manifest was not found.")
 
     exptime_val = _safe_float(prov.get("exptime"))
     if exptime_val is None:
         exptime_val = _safe_float(exptime_hdr)
 
+    print("")
+
     if exptime_val is not None and exptime_val > 0:
-        print("\nEXPOSURE")
-        print(f"  Single frame:       {exptime_val} s")
+        print("  [*] Exposure:")
+        print(f"    - Single frame:    {exptime_val} s")
 
         frames_count = _safe_int(stack_count)
         if (not frames_count or frames_count == 0) and lights_cnt:
@@ -191,20 +189,15 @@ def inspect_fits(fits_path: Path | str) -> int:
 
         if frames_count and frames_count > 0:
             total_exp = exptime_val * frames_count
-            print(f"  Frames in stack:     {frames_count}")
-            print(f"  Total:               {format_time(total_exp)}")
+            print(f"    - Frames in stack: {frames_count}")
+            print(f"    - Total:           {format_time(total_exp)}")
         else:
-            print(
-                "  [NO DATA] FITS header has no STACKCNT or NCOMBINE, "
-                "and passport has no Lights count."
-            )
+            print("    - [NO DATA] FITS header has no STACKCNT or NCOMBINE, and passport has no Lights count.")
     else:
-        print("\nEXPOSURE")
-        print("  [NO DATA] Could not determine exposure time from FITS header or passport.")
+        print("  [*] Exposure:")
+        print("    - [NO DATA] Could not determine exposure time from FITS header or passport.")
 
-    print(f"\n{SEP}")
-    print("Integrity check: use `python -m astroprov.verify`")
-    print(f"{SEP}\n")
+    print("\n  [INFO] Integrity check: use `python -m astroprov.verify <file>`\n")
 
     return 0
 
@@ -214,18 +207,16 @@ def inspect_directory(directory: Path | str) -> int:
     directory = Path(directory).resolve()
 
     if not directory.is_dir():
-        print(f"ERROR: {directory} is not a directory")
+        print(f"  [FAIL] {directory} is not a directory")
         return 1
 
     fits_files = sorted(directory.glob("*.fit")) + sorted(directory.glob("*.fits"))
 
     if not fits_files:
-        print(f"No FITS files in {directory}.")
+        print(f"  [WARN] No FITS files in {directory}.")
         return 1
 
-    print(f"\n{SEP}")
-    print(f"PASSPORT SCAN IN DIRECTORY: {directory}")
-    print(f"{SEP}\n")
+    print(f"\n[*] PASSPORT SCAN IN DIRECTORY: {directory}\n")
 
     with_passport = 0
     total = 0
@@ -235,12 +226,12 @@ def inspect_directory(directory: Path | str) -> int:
         prov = fits_prov.read_provenance(f)
         if prov is not None:
             with_passport += 1
-            print(f"  [PASSPORT] {f.name}")
-            print(f"             ID: {prov.get('id')}")
+            print(f"  [OK] {f.name}")
+            print(f"    - ID: {prov.get('id')}")
         else:
-            print(f"  [NO PASSPORT] {f.name}")
+            print(f"  [WARN] {f.name} (No passport)")
 
-    print(f"\nTotal: {with_passport} with passport out of {total} files\n")
+    print(f"\n  [INFO] Total: {with_passport} with passport out of {total} files\n")
     return 0
 
 
@@ -257,7 +248,7 @@ def main() -> int:
 
     target = args.target
     if not target.exists():
-        print(f"ERROR: path does not exist: {target}")
+        print(f"  [FAIL] Path does not exist: {target}")
         return 1
 
     if target.is_file():

@@ -490,25 +490,28 @@ def pre_stack_main() -> None:
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
 
-    print(f"Pre-stack report: {report_path}")
-    print(f"Sequence frames: {report['sequence']['total_frames']}")
-    print(f"Selected: {report['sequence']['selected_count']}")
-    print(f"Excluded: {report['sequence']['excluded_count']}")
-    print(f"Excluded indices: {report['sequence']['excluded_indices']}")
+    print(f"  [OK] Pre-stack report saved: {report_path.name}")
+    print(f"    - SHA-256: {sha256_file(report_path)[:16]}...")
+    
+    print("  [*] Sequence Analysis:")
+    print(f"    - Total frames: {report['sequence']['total_frames']}")
+    print(f"    - Selected: {report['sequence']['selected_count']}")
+    print(f"    - Excluded: {report['sequence']['excluded_count']}")
+    print(f"    - Excluded indices: {report['sequence']['excluded_indices']}")
+    
+    print("  [*] Mapping Validation:")
     print(
-        "Mapping frames: "
-        f"{report['mapping_validation']['matched_frame_count']}/"
+        f"    - Matched: {report['mapping_validation']['matched_frame_count']}/"
         f"{report['mapping_validation']['sequence_frame_count']}"
     )
-    print(f"Mapping consistent: {report['mapping_validation']['consistent']}")
-    print(f"Status: {report['status']}")
-    print(f"Report SHA-256: {sha256_file(report_path)}")
+    print(f"    - Consistent: {report['mapping_validation']['consistent']}")
+    print(f"    - Status: {report['status']}")
 
     for error in report["mapping_validation"]["errors"]:
-        print(f"MAPPING ERROR: {error}")
+        print(f"    [FAIL] {error}")
 
     for warning in report["warnings"]:
-        print(f"WARNING: {warning}")
+        print(f"  [WARN] {warning}")
 
 
 def validate_pre_stack_report(
@@ -633,7 +636,7 @@ def build_report(
             manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
             passport_id = manifest_data.get("passport_id")
         except (OSError, json.JSONDecodeError) as exc:
-            print(f"  WARNING: Could not read passport_id from manifest: {exc}")
+            print(f"  [WARN] Could not read passport_id from manifest: {exc}")
 
     recorded_count = fits_info["stack_count"]
     count_source = "STACKCNT"
@@ -781,45 +784,50 @@ def post_stack_main() -> None:
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         parser.error(str(exc))
 
-    print(f"Report: {report_path}")
-    print(f"Sequence frames: {report['sequence']['total_frames']}")
-    print(f"Selected: {report['sequence']['selected_count']}")
-    print(f"Excluded: {report['sequence']['excluded_count']}")
-    print(f"Excluded indices: {report['sequence']['excluded_indices']}")
-    print(f"Output SHA-256: {report['output_fits']['sha256']}")
+    print(f"  [OK] Post-stack report saved: {report_path.name}")
+    print(f"    - Output SHA-256: {report['output_fits']['sha256'][:16]}...")
+    
+    print("  [*] Sequence Summary:")
+    print(f"    - Total frames: {report['sequence']['total_frames']}")
+    print(f"    - Selected: {report['sequence']['selected_count']}")
+    print(f"    - Excluded: {report['sequence']['excluded_count']}")
+    print(f"    - Excluded indices: {report['sequence']['excluded_indices']}")
 
+    print("  [*] FITS Cross-check:")
     if report["cross_check"]["consistent"] is True:
-        print("FITS frame count: consistent with .seq")
+        print("    [OK] Frame count consistent with .seq")
     elif report["cross_check"]["consistent"] is False:
-        print("WARNING: FITS frame count does not match .seq selection.")
+        print("    [WARN] Frame count does NOT match .seq selection.")
 
     validation = report["mapping_validation"]
 
     if validation is not None:
+        print("  [*] Mapping Validation:")
         print(
-            "Mapping frames: "
+            "    - Matched: "
             f"{validation['matched_frame_count']}/"
             f"{validation['sequence_frame_count']}"
         )
         print(
-            "Mapping selected/excluded: "
+            "    - Selected/Excluded: "
             f"{validation['selected_mapping_count']}/"
             f"{validation['excluded_mapping_count']}"
         )
-        print(f"Mapping consistent: {validation['consistent']}")
+        print(f"    - Consistent: {validation['consistent']}")
 
         for error in validation["errors"]:
-            print(f"MAPPING ERROR: {error}")
+            print(f"    [FAIL] {error}")
 
     if report["pre_stack_report"] is not None:
         link = report["pre_stack_report"]
-        print(f"Pre-stack report verified: {link['verified']}")
-        print(f"Pre-stack report SHA-256: {link['sha256']}")
+        print("  [*] Pre-stack Link:")
+        print(f"    - Verified: {link['verified']}")
+        print(f"    - SHA-256: {link['sha256'][:16]}...")
     else:
-        print("Pre-stack report: not linked")
+        print("  [*] Pre-stack Link: Not linked")
 
     for warning in report["warnings"]:
-        print(f"WARNING: {warning}")
+        print(f"  [WARN] {warning}")
 
 
 def main() -> None:

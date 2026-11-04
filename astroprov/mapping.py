@@ -73,16 +73,16 @@ def build_mapping(object_dir: Path | str) -> Path:
 
     # --- STEP 1: Create or read the mapping base ---
     if not mapping_path.exists():
-        print("  Mapping file not found. Creating from scratch...")
+        print("  [*] Mapping file not found. Creating from scratch...")
         mappings = []
     else:
         try:
             mapping_data = json.loads(mapping_path.read_text(encoding="utf-8"))
             mappings = mapping_data.get("mappings", [])
             if not mappings:
-                print("  Mapping file is empty. Filling the structure...")
+                print("  [*] Mapping file is empty. Filling the structure...")
         except json.JSONDecodeError:
-            print("  ERROR: Mapping file is corrupted. Creating from scratch...")
+            print("  [WARN] Mapping file is corrupted. Creating from scratch...")
             mappings = []
 
     if not mappings:
@@ -106,9 +106,8 @@ def build_mapping(object_dir: Path | str) -> Path:
     processed_files = sorted([p for p in all_processed if _is_valid_processed_file(p)])
 
     if len(processed_files) != len(mappings):
-        print(f"  WARNING: {len(mappings)} original frames, "
-              f"but {len(processed_files)} processed FITS found.")
-        print("  Continuing... Some frames may have been rejected by Siril.")
+        print(f"  [WARN] Frame mismatch: {len(mappings)} originals, {len(processed_files)} processed.")
+        print("    Some frames may have been rejected by Siril.")
 
     processed_meta = {p: metadata(p) for p in processed_files}
     used = set()
@@ -135,7 +134,7 @@ def build_mapping(object_dir: Path | str) -> Path:
 
         if len(matches) == 0:
             # Frame lost (rejected by Siril)
-            print(f"  [MISSING] {original.name} — not found in process")
+            print(f"  [WARN] Missing frame: {original.name}")
             item["processed"]["path"] = None
             item["processed"]["sha256"] = None
             item["matching"] = {"method": "NOT_FOUND", "date_obs_delta_seconds": None}
@@ -159,7 +158,7 @@ def build_mapping(object_dir: Path | str) -> Path:
     if mapping_path.exists():
         backup = mapping_path.with_name("astroprov_frame_mapping.backup.json")
         shutil.copy2(mapping_path, backup)
-        print(f"  Backup: {backup}")
+        print(f"  [*] Backup saved: {backup.name}")
 
     for item, processed, delta in updates:
         item["processed"]["path"] = processed.relative_to(object_dir).as_posix()
@@ -191,17 +190,17 @@ def main() -> None:
     args = parser.parse_args()
 
     try:
-        path = build_mapping(args.object_dir)  # resolve() is handled inside the function
+        path = build_mapping(args.object_dir)
         data = json.loads(path.read_text(encoding="utf-8"))
         
-        print(f"\n  Mapping updated and saved: {path}")
-        print(f"  Total originals: {data['matching_count']}")
-        print(f"  Successfully matched: {data['matched_count']}")
-        print(f"  Lost (rejected): {data['missing_count']}")
-        print("  Source hashes verified.")
+        print(f"  [OK] Mapping updated: {path.name}")
+        print(f"    - Total originals: {data['matching_count']}")
+        print(f"    - Successfully matched: {data['matched_count']}")
+        print(f"    - Lost (rejected): {data['missing_count']}")
+        print("  [OK] Source hashes verified.")
         
     except (OSError, ValueError, KeyError) as exc:
-        print(f"ERROR: {exc}", file=sys.stderr)
+        print(f"[FAIL] {exc}", file=sys.stderr)
         sys.exit(1)
 
 

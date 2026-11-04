@@ -35,13 +35,11 @@ def clean_process_dir(object_dir: Path) -> None:
     """Clean the process directory so Siril starts from scratch."""
     process_dir = object_dir / "process"
     if process_dir.exists():
-        print("[*] Cleaning process directory from old files...")
         for item in process_dir.iterdir():
             if item.is_file():
                 item.unlink()
             elif item.is_dir():
                 shutil.rmtree(item)
-        print("  Process directory cleaned.\n")
 
 
 def _safe_exptime(fits_path: Path) -> float:
@@ -58,19 +56,25 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
     object_dir = object_dir.resolve()
     print(f"\nASTROPROV AUTO PIPELINE: {object_dir.name}\n")
 
-    print("[*] Analyzing Siril script...")
+    # --- Step 1 ---
+    print("[1/7] Analyzing Siril script...")
     script_calib = analyze_script_calibration(siril_script)
-    print(f"  Darks in script: {'Yes' if script_calib['uses_darks'] else 'No'}")
-    print(f"  Biases in script: {'Yes' if script_calib['uses_biases'] else 'No'}")
-    print(f"  Flats in script: {'Yes' if script_calib['uses_flats'] else 'No'}\n")
+    print(f"  - Darks: {'Yes' if script_calib['uses_darks'] else 'No'}")
+    print(f"  - Biases: {'Yes' if script_calib['uses_biases'] else 'No'}")
+    print(f"  - Flats: {'Yes' if script_calib['uses_flats'] else 'No'}\n")
 
+    # --- Step 2 ---
+    print("[2/7] Calibration and Alignment (Siril)...")
+    print("  [*] Cleaning process directory...")
     clean_process_dir(object_dir)
+    print("  [OK] Process directory cleaned.")
+    
     run_siril_cli(siril_cli_exe, siril_script, object_dir, "Calibration and Alignment")
-    print("  Calibration completed.\n")
+    print("")
 
-    print("[2/7] Hashing source data (snapshot)...")
+    # --- Step 3 ---
+    print("[3/7] Hashing source data (snapshot)...")
     manifest_path = snapshot.create_manifest(object_dir)
-    print()
     
     manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
     passport_id = manifest_data["passport_id"]
@@ -89,22 +93,26 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
         first_lights = sorted(lights_dir.glob("*.fits"))
         if first_lights:
             exptime = _safe_exptime(first_lights[0])
+    print("")
 
-    print("[3/7] Creating frame mapping...")
+    # --- Step 4 ---
+    print("[4/7] Creating frame mapping...")
     mapping_path = mapping.build_mapping(object_dir)
-    print()
+    print("")
 
-    print("STEP 1: MANUAL FRAME SELECTION")
-    print("1. Open Siril (GUI) manually.")
-    print(f"2. Navigate to folder: {object_dir.name}/process")
-    print("3. Open sequence r_pp_light_.seq.")
-    print("4. Select good frames (remove clouds, defects).")
-    print("5. Save changes and CLOSE SIRIL (important!).")
+    # --- Step 5 ---
+    print("[5/7] Manual Frame Selection...")
+    print("  [*] Please open Siril (GUI) manually.")
+    print(f"    - Navigate to: {object_dir.name}/process")
+    print("    - Open sequence: r_pp_light_.seq")
+    print("    - Select good frames (remove clouds, defects).")
+    print("    - Save changes and CLOSE SIRIL.")
     
-    input("\n>>> When Siril is closed, press ENTER here...")
-    print("\nContinuing...\n")
+    input("\n  >>> When Siril is closed, press ENTER here... ")
+    print("\n  [OK] Continuing...\n")
 
-    print("[4/7] Capturing sequence state...")
+    # --- Step 6 ---
+    print("[6/7] Capturing sequence state (pre-stack)...")
     process_dir = object_dir / "process"
     
     seq_files = list(process_dir.glob("r_*.seq"))
@@ -116,9 +124,8 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
         
     seq_path = max(seq_files, key=lambda p: p.stat().st_mtime)
     seq_name = seq_path.stem 
-    print(f"  Found .seq: {seq_path.name}\n")
+    print(f"  [OK] Found .seq: {seq_path.name}")
 
-    print("[5/7] Creating pre-stack report...")
     object_dir_runs = object_dir / ".astroprov" / "runs"
     object_dir_runs.mkdir(parents=True, exist_ok=True)
 
@@ -130,20 +137,23 @@ def run_auto_pipeline(object_dir: Path, siril_cli_exe: Path, siril_script: Path)
         )
         report_path = object_dir_runs / f"pre-stack-{processing.timestamp_for_filename()}.json"
         processing.save_report(report, report_path)
-        print(f"  Pre-stack report: {report_path.name}")
+        print(f"  [OK] Pre-stack report saved: {report_path.name}")
         
         if report["status"] == "validation_failed":
-            print("  WARNING: Pre-stack report has validation_failed status.")
+            print("  [WARN] Pre-stack report has validation_failed status.")
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"Failed to create pre-stack report: {exc}") from exc
+    print("")
 
-    print("\nSTEP 2: AUTOMATED STACKING")
+    # --- Step 7 ---
+    print("[7/7] Automated stacking and signing...")
     
     stack_script_path = process_dir / "_stack_temp.ssf"
     output_fits_name = f"{seq_name}_stacked"
     
     stack_cmd = f"stack {seq_name} rej 3 3 -nonorm -filter-included -out={output_fits_name}"
-    print(f"  Stacking parameters: {stack_cmd}")
+    print("  [*] Preparing stacking sequence...")
+    print(f"    - Parameters: {stack_cmd}")
 
     stack_script_content = f"""requires 1.2.0
 cd process
@@ -152,16 +162,11 @@ cd ..
 """
     stack_script_path.write_text(stack_script_content, encoding="utf-8")
 
-    run_siril_cli(
-        siril_cli_exe, stack_script_path, object_dir,
-        "Stacking", indent="  ", prefix="",
-    )
-    print("  Stacking completed.\n")
+    run_siril_cli(siril_cli_exe, stack_script_path, object_dir, "Stacking")
 
     if stack_script_path.exists():
         stack_script_path.unlink()
 
-    print("[6/7] Analyzing stacking results...")
     fits_files = list(process_dir.glob("*.fit"))
     stack_files = [f for f in fits_files if "stacked" in f.stem.lower() or "result" in f.stem.lower()]
     
@@ -169,9 +174,8 @@ cd ..
         raise FileNotFoundError("Final stacked FITS file not found in process directory.")
     
     output_fits = max(stack_files, key=lambda p: p.stat().st_mtime)
-    print(f"  Found final FITS: {output_fits.name}\n")
+    print(f"  [OK] Found final FITS: {output_fits.name}")
 
-    print("[7/7] Ed25519 signing, embedding passport and creating post-stack report...")
     try:
         keys_dir = object_dir / ".astroprov" / "keys"
         
@@ -193,14 +197,12 @@ cd ..
 
         # --- FreeTSA Timestamp ---
         tsr_path = proc_report_path.with_suffix(".tsr")
-        print("  Requesting trusted timestamp from FreeTSA...")
+        print("  [*] Requesting trusted timestamp from FreeTSA...")
         try:
-            # ИСПРАВЛЕНО: передаем байты, а не хэш
             timestamping.stamp_data(report_bytes, tsr_path)
-            print(f"  Timestamp saved: {tsr_path.name}")
+            print(f"    - Timestamp saved: {tsr_path.name}")
         except Exception as exc:
-            print(f"  [WARNING] Timestamping failed: {exc}")
-        # -------------------------
+            print(f"  [WARN] Timestamping failed: {exc}")
 
         sig_payload = {
             "report_hash": report_hash,
@@ -235,18 +237,20 @@ cd ..
         
         fits_prov.write_provenance(output_fits, prov_data)
         
-        print(f"  Post-stack report: {proc_report_path.name}")
-        print(f"  Report signed with Ed25519 (FP: {pubkey_fp})")
+        print("  [*] Signing post-stack report...")
+        print(f"    - Report: {proc_report_path.name}")
+        print(f"    - Passport FP: {pubkey_fp}")
+        print("  [OK] Passport embedded successfully.")
     except (OSError, ValueError) as exc:
         raise RuntimeError(f"Failed to create post-stack report: {exc}") from exc
 
-    print("\nPassport embedded. Starting verification...")
+    print("\n[*] Starting verification...")
     exit_code = verify.verify_output(str(output_fits), str(proc_report_path))
     
     if exit_code == 0:
-        print("\nAUTO PIPELINE COMPLETED SUCCESSFULLY. All checks passed.")
+        print("\n[OK] AUTO PIPELINE COMPLETED SUCCESSFULLY. All checks passed.")
     else:
-        print("\nAUTO PIPELINE COMPLETED WITH ERRORS. Check logs above.")
+        print("\n[FAIL] AUTO PIPELINE COMPLETED WITH ERRORS. Check logs above.")
     
     return exit_code
 
@@ -265,11 +269,11 @@ def main() -> int:
     args = parser.parse_args()
 
     if not args.object_dir.is_dir():
-        print(f"Error: {args.object_dir} is not a directory.")
+        print(f"[FAIL] {args.object_dir} is not a directory.")
         return 1
         
     if not args.script.is_file():
-        print(f"Error: Script {args.script} not found.")
+        print(f"[FAIL] Script {args.script} not found.")
         return 1
 
     try:
@@ -277,7 +281,7 @@ def main() -> int:
         exit_code = run_auto_pipeline(args.object_dir, siril_exe, args.script)
         return exit_code
     except (OSError, ValueError, RuntimeError) as exc:
-        print(f"\nPIPELINE FAILED: {exc}")
+        print(f"\n[FAIL] PIPELINE FAILED: {exc}")
         return 1
 
 
