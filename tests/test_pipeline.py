@@ -1,3 +1,20 @@
+# Copyright (C) 2026 Aliaksei Chernik
+#
+# This file is part of AstroProv.
+#
+# AstroProv is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# AstroProv is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
 """Unit tests for astroprov.cli.pipeline (no Siril required)."""
 
 import json
@@ -36,7 +53,7 @@ CALIB_NONE = {"uses_darks": False, "uses_biases": False, "uses_flats": False}
 
 # ------------------------------------------------------- clean_process_dir ---
 
-def test_clean_process_dir_removes_files_and_subdirs(tmp_path):
+def test_clean_process_dir_clears_all_content(tmp_path):
     process = tmp_path / "process"
     process.mkdir()
     (process / "file.fit").write_text("x")
@@ -213,7 +230,7 @@ def test_main_fails_if_script_missing(monkeypatch, tmp_path):
     assert pipeline.main() == 1
 
 
-def test_main_parses_flags(monkeypatch, tmp_path):
+def test_main_parses_cli_flags_correctly(monkeypatch, tmp_path):
     obj = tmp_path / "M42"
     obj.mkdir()
     script = tmp_path / "s.ssf"
@@ -306,7 +323,7 @@ def _make_object_dir(tmp_path):
     return obj, script
 
 
-def test_run_pipeline_auto_mode_full(monkeypatch, tmp_path):
+def test_run_pipeline_auto_mode_executes_all_steps(monkeypatch, tmp_path):
     obj, script = _make_object_dir(tmp_path)
     siril_calls = _setup_common_mocks(monkeypatch, tmp_path, obj, script)
 
@@ -334,7 +351,7 @@ def test_run_pipeline_auto_mode_full(monkeypatch, tmp_path):
     assert captured["exptime"] == 600.0
 
 
-def test_run_pipeline_manual_mode_calls_input_once(monkeypatch, tmp_path):
+def test_run_pipeline_manual_mode_waits_for_input_once(monkeypatch, tmp_path):
     obj, script = _make_object_dir(tmp_path)
     _setup_common_mocks(monkeypatch, tmp_path, obj, script)
     monkeypatch.setattr(pipeline.fits_prov, "write_provenance", lambda f, p: None)
@@ -356,7 +373,7 @@ def test_run_pipeline_manual_mode_calls_input_once(monkeypatch, tmp_path):
     assert calls["n"] == 1
 
 
-def test_run_pipeline_removes_ssf_on_siril_failure(monkeypatch, tmp_path):
+def test_run_pipeline_cleans_temp_ssf_on_siril_error(monkeypatch, tmp_path):
     obj, script = _make_object_dir(tmp_path)
 
     def fake_run_siril(exe, script_path, work_dir, action_name, **kw):
