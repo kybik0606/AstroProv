@@ -116,11 +116,21 @@ def seal_fits(
         }
     }
 
+    merkle_root = data_hash
+
     if raw_dir:
         passport_id = f"collection-{data_hash[:8]}"
         report_data["schema"] = "astroprov-collection-v1"
         report_data["proof_level"] = "claimed"
-        
+
+        lights_category = categories.get("lights")
+        if not lights_category:
+            raise ValueError(
+                "Raw directory has no 'lights' category; cannot seal "
+                "a collection without source lights."
+            )
+        merkle_root = lights_category["merkle_root"]
+
         # Cross-check lights count
         raw_lights = categories.get("lights", {}).get("file_count", 0)
         if lights_cnt > 0 and raw_lights > 0 and lights_cnt != raw_lights:
@@ -169,7 +179,7 @@ def seal_fits(
     prov_data = {
         "version": "1.1",
         "id": passport_id,
-        "merkle_root": data_hash,
+        "merkle_root": merkle_root,
         "date": created_utc,
         "tool": tool_name,
         "schema": schema_name,

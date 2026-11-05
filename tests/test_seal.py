@@ -111,6 +111,51 @@ def test_seal_manual_overrides_replace_header_values(tmp_path, mocked_environmen
     assert prov["exptime"] == 600.0
 
 
+def test_seal_collection_mode_uses_lights_merkle_root(
+    tmp_path, monkeypatch, mocked_environment
+):
+    fits_path = make_fits(tmp_path / "test.fit", lights=10, exptime=120.0)
+    raw_dir = make_raw_dir(tmp_path / "raw")
+
+    lights_root = "a" * 64
+    fake_categories = {
+        "lights": {"file_count": 10, "merkle_root": lights_root},
+        "darks": {"file_count": 4, "merkle_root": "b" * 64},
+    }
+    monkeypatch.setattr(seal.snapshot, "snapshot_directory", lambda d: fake_categories)
+
+    seal.seal_fits(
+        fits_path, keys_dir=tmp_path, object_name="M31", raw_dir=raw_dir
+    )
+
+    prov = mocked_environment
+    assert prov["merkle_root"] == lights_root
+
+    report_path = next(
+        (tmp_path / ".astroprov" / "runs").glob("processing-collection-*.json")
+    )
+    report_data = json.loads(report_path.read_text(encoding="utf-8"))
+    assert report_data["output_fits"]["sha256"] == (
+        seal.fits_prov.calculate_fits_data_hash(fits_path)
+    )
+
+
+def test_seal_collection_mode_requires_lights(tmp_path, monkeypatch, mocked_environment):
+    fits_path = make_fits(tmp_path / "test.fit", lights=10, exptime=120.0)
+    raw_dir = make_raw_dir(tmp_path / "raw")
+
+    monkeypatch.setattr(
+        seal.snapshot,
+        "snapshot_directory",
+        lambda d: {"darks": {"file_count": 4, "merkle_root": "b" * 64}},
+    )
+
+    with pytest.raises(ValueError, match="no 'lights' category"):
+        seal.seal_fits(
+            fits_path, keys_dir=tmp_path, object_name="M31", raw_dir=raw_dir
+        )
+
+
 def test_seal_collection_mode_embeds_source_data(tmp_path, monkeypatch, mocked_environment):
     fits_path = make_fits(tmp_path / "test.fit", lights=10, exptime=120.0)
     raw_dir = make_raw_dir(tmp_path / "raw")

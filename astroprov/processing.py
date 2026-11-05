@@ -26,7 +26,7 @@ from pathlib import Path
 
 from astropy.io import fits
 from astroprov import fits_prov
-from astroprov.utils import sha256_file
+from astroprov.utils import safe_float, sha256_file
 
 
 SELECTION_RE = re.compile(r"^\s*I\s+(\d+)\s+([01])\s*$")
@@ -101,9 +101,6 @@ def inspect_output_fits(path: Path) -> dict:
     """Read basic output FITS metadata without loading image pixels."""
     with fits.open(path, mode="readonly", memmap=True) as hdul:
         header = hdul[0].header
-        data = hdul[0].data
-
-        shape = list(data.shape) if data is not None else None
         history_value = header.get("HISTORY", [])
 
         if isinstance(history_value, str):
@@ -123,12 +120,20 @@ def inspect_output_fits(path: Path) -> dict:
             except (ValueError, TypeError):
                 return None
 
+        naxis1 = _safe_int("NAXIS1")
+        naxis2 = _safe_int("NAXIS2")
+        shape = (
+            [naxis1, naxis2]
+            if naxis1 is not None and naxis2 is not None
+            else None
+        )
+
         return {
             "hdu_count": len(hdul),
             "shape": shape,
             "object": header.get("OBJECT"),
             "date_obs": header.get("DATE-OBS"),
-            "exptime": float(header["EXPTIME"]) if "EXPTIME" in header else None,
+            "exptime": safe_float(header.get("EXPTIME")) or 0.0,
             "instrument": header.get("INSTRUME"),
             "stack_count": _safe_int("STACKCNT"),
             "combine_count": _safe_int("NCOMBINE"),

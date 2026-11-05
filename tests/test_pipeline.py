@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 from astropy.io import fits
 
+from astroprov import processing
 from astroprov.cli import pipeline
 
 
@@ -94,6 +95,20 @@ def test_safe_exptime_invalid_string(tmp_path):
 
 def test_safe_exptime_missing_file(tmp_path):
     assert pipeline._safe_exptime(tmp_path / "nonexistent.fits") == 0.0
+
+
+# ----------------------------------------------------- inspect_output_fits ---
+
+def test_inspect_output_fits_tolerates_invalid_exptime(tmp_path):
+    hdu = fits.PrimaryHDU(data=[[1.0, 2.0], [3.0, 4.0]])
+    hdu.header["EXPTIME"] = "unknown"
+    path = tmp_path / "a.fits"
+    hdu.writeto(path)
+
+    info = processing.inspect_output_fits(path)
+
+    assert info["exptime"] == 0.0
+    assert info["shape"] == [2, 2]
 
 
 # --------------------------------------------------------- _find_sequence ---
