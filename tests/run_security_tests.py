@@ -47,6 +47,9 @@ TAMPER_TARGETS = [
     ("PROVEXP", "exptime", 999.0),
     ("PROVMRKL", "merkle_root", "0" * 64),
     ("PROVID", "passport_id", "00000000-0000-0000-0000-000000000000"),
+    # Phase 2 additions: these fields are now part of the canonical payload
+    ("PROVDATE", "date", "1970-01-01T00:00:00+00:00"),
+    ("PROVTYPE", "schema", "astroprov-fake-v9"),
 ]
 
 
