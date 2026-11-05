@@ -333,7 +333,7 @@ def _verify_mapping_frames(
 
     records_with_processed = [
         r for r in records
-        if isinstance(r, dict) and r.get("processed", {}).get("path")
+        if isinstance(r, dict) and (r.get("processed") or {}).get("path")
     ]
     total_pairs = len(records_with_processed)
 
@@ -608,6 +608,10 @@ def verify_output(
 
         report = read_json(report_path)
 
+        if not isinstance(report, dict):
+            verifier.fail("Processing report must be a JSON object")
+            report = {}
+
         passport = _read_fits_passport(output, verifier)
 
         if trusted_key:
@@ -717,7 +721,7 @@ def verify_output(
         )
         return 0
 
-    except (OSError, ValueError, TypeError, KeyError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError) as exc:
         print(f"\n  [FAIL] Error reading or verifying data: {exc}")
         return 1
 
