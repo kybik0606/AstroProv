@@ -23,6 +23,7 @@ from pathlib import Path
 import pytest
 from astropy.io import fits
 
+from astroprov import signature, verify
 from astroprov.cli import seal
 from astroprov.utils import safe_int, safe_float
 
@@ -182,3 +183,62 @@ def test_seal_fits_corrupt_fits(tmp_path, monkeypatch):
     
     with pytest.raises(OSError):
         seal.seal_fits(bad_fits, keys_dir=tmp_path, object_name="Test")
+
+
+# ------------------------------------------------ key fingerprint checks ---
+
+def test_public_key_fingerprint_is_der_based_and_key_specific(tmp_path):
+    """Fingerprint must ignore PEM formatting and change with the key."""
+    keys_dir = tmp_path / "keys"
+    signature.generate_keys(keys_dir)
+
+    pem_path = keys_dir / "public_key.pem"
+    original_pem = pem_path.read_bytes()
+    fingerprint = signature.get_public_key_fingerprint(keys_dir)
+
+    assert len(fingerprint) == 16
+
+    # Re-encoding the same key with CRLF line endings must not change the
+    # fingerprint (the old implementation hashed raw PEM bytes).
+    pem_path.write_bytes(original_pem.replace(b"\n", b"\r\n"))
+    assert signature.get_public_key_fingerprint(keys_dir) == fingerprint
+
+    # A different public key must produce a different fingerprint.
+    other_keys = tmp_path / "other_keys"
+    signature.generate_keys(other_keys)
+    assert signature.get_public_key_fingerprint(other_keys) != fingerprint
+
+
+def test_verify_fails_when_public_key_differs_from_passport(
+    tmp_path, monkeypatch, capsys
+):
+    """Replacing the verification key must not make a sealed file pass."""
+    monkeypatch.setattr(seal.timestamping, "stamp_data", lambda data, path: None)
+
+    fits_path = make_fits(tmp_path / "sealed.fit", lights=5, exptime=60.0)
+    seal.seal_fits(fits_path, keys_dir=None, object_name="M31")
+
+    keys_dir = tmp_path / ".astroprov" / "keys"
+    attacker_keys = tmp_path / "attacker_keys"
+    signature.generate_keys(attacker_keys)
+    (keys_dir / "public_key.pem").write_bytes(
+        (attacker_keys / "public_key.pem").read_bytes()
+    )
+
+    assert verify.verify_output(str(fits_path)) == 1
+    assert "Passport fingerprint does not match" in capsys.readouterr().out
+
+
+def test_verify_honors_trusted_key(tmp_path, monkeypatch, capsys):
+    """--trusted-key must pin verification to the expected fingerprint."""
+    monkeypatch.setattr(seal.timestamping, "stamp_data", lambda data, path: None)
+
+    fits_path = make_fits(tmp_path / "sealed.fit", lights=5, exptime=60.0)
+    seal.seal_fits(fits_path, keys_dir=None, object_name="M31")
+
+    keys_dir = tmp_path / ".astroprov" / "keys"
+    fingerprint = signature.get_public_key_fingerprint(keys_dir)
+
+    assert verify.verify_output(str(fits_path), trusted_key=fingerprint) == 0
+    assert verify.verify_output(str(fits_path), trusted_key="0" * 16) == 1
+    assert "The key fingerprint is not trusted!" in capsys.readouterr().out
