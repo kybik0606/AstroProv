@@ -100,6 +100,7 @@ def _read_fits_passport(output: Path, verifier: Verification) -> dict:
         "signature": None,
         "pubkey_fp": None,
         "merkle_root": None,
+        "merkle_algorithm": None,
         "date": None,
         "tool": None,
         "schema": None,
@@ -125,6 +126,7 @@ def _read_fits_passport(output: Path, verifier: Verification) -> dict:
             passport["report_hash"] = hdr.get("PROVHASH")
             passport["pubkey_fp"] = hdr.get("PROVPUBK")
             passport["merkle_root"] = hdr.get("PROVMRKL")
+            passport["merkle_algorithm"] = hdr.get("PROVMALG")
             passport["date"] = hdr.get("PROVDATE")
             passport["tool"] = hdr.get("PROVTOOL")
             passport["lights"] = hdr.get("PROVLIT")
@@ -219,8 +221,27 @@ def _verify_signature(
 
     version = passport.get("version")
 
-    if version == "1.1":
-        # NEW VERSION: Reconstruct the full passport dict for canonical_payload
+    if version == "1.2":
+        # v1.2 binds the Merkle algorithm to the signature as well.
+        canonical_dict = {
+            "version": passport["version"],
+            "id": passport["id"],
+            "merkle_root": passport["merkle_root"],
+            "merkle_algorithm": passport["merkle_algorithm"],
+            "date": passport["date"],
+            "tool": passport["tool"],
+            "schema": passport["schema"],
+            "lights_count": passport["lights"],
+            "darks_count": passport["darks"],
+            "biases_count": passport["biases"],
+            "flats_count": passport["flats"],
+            "exptime": passport["exptime"],
+            "pubkey_fingerprint": passport["pubkey_fp"],
+            "report_hash": passport["report_hash"],
+        }
+        sig_bytes = signature.canonical_payload(canonical_dict)
+    elif version == "1.1":
+        # v1.1: full passport signing without the Merkle algorithm field.
         canonical_dict = {
             "version": passport["version"],
             "id": passport["id"],
@@ -287,35 +308,271 @@ def _verify_timestamp(
         verifier.fail(f"Error verifying timestamp: {exc}")
 
 
+LEGACY_PASSPORT_VERSIONS = {"1.0", "1.1"}
+
+
+def _verify_passport_schema(
+    passport: dict,
+    report_schema: str,
+    verifier: Verification,
+) -> None:
+    """Ensure PROVTYPE in the FITS passport matches the JSON report schema."""
+    passport_schema = passport.get("schema")
+    version = str(passport.get("version") or "")
+
+    if not passport_schema:
+        if version in LEGACY_PASSPORT_VERSIONS:
+            verifier.ok("Passport has no PROVTYPE (legacy passport)")
+        else:
+            verifier.fail("Passport is missing the PROVTYPE field")
+        return
+
+    if passport_schema == report_schema:
+        verifier.ok(f"Passport schema matches the report ({report_schema})")
+        return
+
+    if (
+        version in LEGACY_PASSPORT_VERSIONS
+        and passport_schema == "astroprov-standalone-v1"
+        and report_schema == "astroprov-processing-v2"
+    ):
+        # Old pipeline builds left PROVTYPE at its standalone default.
+        verifier.ok("Passport schema is the legacy pipeline default")
+        return
+
+    verifier.fail(
+        f"Passport schema mismatch! FITS: {passport_schema}, "
+        f"report: {report_schema}"
+    )
+
+
+def _manifest_source_data(manifest: dict) -> dict:
+    """Extract category counts and Merkle roots from a manifest."""
+    categories = manifest.get("categories")
+    if not isinstance(categories, dict):
+        return {}
+
+    source_data = {}
+    for name, category in categories.items():
+        if isinstance(category, dict):
+            source_data[name] = {
+                "file_count": category.get("file_count", 0),
+                "merkle_root": category.get("merkle_root"),
+            }
+    return source_data
+
+
+def _verify_source_manifest(
+    report: dict,
+    output: Path,
+    passport: dict,
+    verifier: Verification,
+) -> dict | None:
+    """Verify the hash and passport ID of the recorded source manifest."""
+    info = report.get("source_manifest")
+
+    if info is None:
+        verifier.ok("Source manifest is not recorded (legacy report)")
+        return None
+
+    if not isinstance(info, dict):
+        verifier.fail("Report has invalid source_manifest section")
+        return None
+
+    path_value = info.get("path")
+    if not path_value:
+        verifier.fail("Report is missing the source manifest path")
+        return None
+
+    manifest_path = Path(path_value)
+    if not manifest_path.is_absolute():
+        manifest_path = output.parent.parent / manifest_path
+    manifest_path = manifest_path.resolve()
+
+    if not verifier.check_hash(
+        manifest_path, info.get("sha256", ""), "Source manifest"
+    ):
+        return None
+
+    try:
+        manifest = read_json(manifest_path)
+    except (OSError, ValueError, TypeError) as exc:
+        verifier.fail(f"Could not read source manifest: {exc}")
+        return None
+
+    if not isinstance(manifest, dict):
+        verifier.fail("Source manifest must be a JSON object")
+        return None
+
+    manifest_id = manifest.get("passport_id")
+    if manifest_id != passport.get("id"):
+        verifier.fail(
+            f"Manifest passport ID mismatch! FITS: {passport.get('id')}, "
+            f"manifest: {manifest_id}"
+        )
+    else:
+        verifier.ok("Source manifest passport ID matches the FITS passport")
+
+    return manifest
+
+
+def _manifest_from_report(report: dict, output: Path) -> dict | None:
+    """Load the source manifest referenced by a report, if available."""
+    info = report.get("source_manifest")
+    if not isinstance(info, dict) or not info.get("path"):
+        return None
+
+    manifest_path = Path(info["path"])
+    if not manifest_path.is_absolute():
+        manifest_path = output.parent.parent / manifest_path
+
+    try:
+        manifest = read_json(manifest_path.resolve())
+    except (OSError, ValueError, TypeError):
+        return None
+
+    return manifest if isinstance(manifest, dict) else None
+
+
+def _expected_source_data(
+    report: dict,
+    output: Path,
+) -> tuple[dict, str]:
+    """Return the expected category roots and the Merkle algorithm to use."""
+    algorithm = report.get("merkle_algorithm")
+    source_data = report.get("source_data")
+
+    if (
+        not isinstance(source_data, dict)
+        or not source_data
+        or not algorithm
+    ):
+        # Backward compatibility: older pipeline reports only stored the
+        # manifest, and new reports should always name the algorithm.
+        manifest = _manifest_from_report(report, output)
+        if manifest is not None:
+            if not algorithm:
+                algorithm = manifest.get("merkle_algorithm")
+            if not isinstance(source_data, dict) or not source_data:
+                source_data = _manifest_source_data(manifest)
+
+    if not isinstance(source_data, dict):
+        source_data = {}
+
+    return source_data, algorithm or snapshot.MERKLE_V1
+
+
 def _verify_source_data(
     report: dict,
     raw_dir: Path,
+    output: Path,
     verifier: Verification,
 ) -> None:
-    """Verify that raw source files match the Merkle roots in the report."""
+    """Verify raw source categories against the Merkle roots in the report."""
     print(f"\n  [*] Verifying raw source data in {raw_dir.name}...")
+
+    source_data, algorithm = _expected_source_data(report, output)
+
+    if not source_data:
+        verifier.fail("Report has no source_data to verify")
+        return
+
+    if algorithm not in (snapshot.MERKLE_V1, snapshot.MERKLE_V2):
+        verifier.fail(f"Unsupported Merkle algorithm in report: {algorithm}")
+        return
+
     if not raw_dir.is_dir():
         verifier.fail(f"Raw directory not found: {raw_dir}")
         return
 
     try:
-        categories = snapshot.snapshot_directory(raw_dir)
-    except Exception as exc:
+        categories = snapshot.snapshot_directory(
+            raw_dir, merkle_algorithm=algorithm
+        )
+    except (OSError, ValueError) as exc:
         verifier.fail(f"Failed to scan raw directory: {exc}")
         return
 
-    source_data = report.get("source_data", {})
-    
     for cat_name, expected_data in source_data.items():
+        if not isinstance(expected_data, dict):
+            verifier.fail(f"[{cat_name}] Invalid source_data entry")
+            continue
+
+        expected_root = expected_data.get("merkle_root")
+        if not isinstance(expected_root, str) or not expected_root:
+            verifier.fail(f"[{cat_name}] Missing Merkle root in the report")
+            continue
+
         actual = categories.get(cat_name)
         if not actual:
-            verifier.fail(f"Category '{cat_name}' missing from raw directory.")
+            verifier.fail(f"Category '{cat_name}' missing from raw directory")
             continue
-        
-        if actual["merkle_root"] != expected_data["merkle_root"]:
-            verifier.fail(f"[{cat_name}] Merkle root mismatch! Source files were modified.")
+
+        if actual["merkle_root"] != expected_root:
+            verifier.fail(
+                f"[{cat_name}] Merkle root mismatch! "
+                "Source files were modified."
+            )
         else:
-            verifier.ok(f"[{cat_name}] Source data matches ({actual['file_count']} files)")
+            verifier.ok(
+                f"[{cat_name}] Source data matches "
+                f"({actual['file_count']} files)"
+            )
+
+
+def _verify_collection_cross_check(
+    report: dict,
+    verifier: Verification,
+) -> None:
+    """Verify that the FITS light count matches the raw lights count."""
+    cross = report.get("cross_check")
+
+    if cross is None:
+        verifier.ok("Collection report has no cross_check (legacy report)")
+        return
+
+    if not isinstance(cross, dict):
+        verifier.fail("Report has invalid cross_check section")
+        return
+
+    fits_lights = cross.get("fits_lights")
+    raw_lights = cross.get("raw_lights")
+
+    if not isinstance(fits_lights, int) or not isinstance(raw_lights, int):
+        verifier.fail("cross_check is missing integer lights counts")
+        return
+
+    rejected_lights = cross.get("rejected_lights")
+
+    if rejected_lights is None:
+        # Legacy reports did not record rejected frames. A difference is
+        # expected when the stacking software dropped bad frames.
+        if fits_lights != raw_lights:
+            verifier.ok(
+                "Collection counts differ "
+                f"({fits_lights} used, {raw_lights} raw); "
+                "legacy report does not record rejected frames"
+            )
+        else:
+            verifier.ok(f"Collection lights count matches ({fits_lights})")
+        return
+
+    if not isinstance(rejected_lights, int) or rejected_lights < 0:
+        verifier.fail("cross_check has an invalid rejected_lights value")
+        return
+
+    if fits_lights + rejected_lights != raw_lights:
+        verifier.fail(
+            f"cross_check lights mismatch! FITS: {fits_lights}, "
+            f"raw: {raw_lights}, rejected: {rejected_lights}"
+        )
+    elif rejected_lights:
+        verifier.ok(
+            f"Collection lights count matches ({fits_lights} used, "
+            f"{rejected_lights} rejected)"
+        )
+    else:
+        verifier.ok(f"Collection lights count matches ({fits_lights})")
 
 
 def _verify_mapping_frames(
@@ -333,7 +590,7 @@ def _verify_mapping_frames(
 
     records_with_processed = [
         r for r in records
-        if isinstance(r, dict) and r.get("processed", {}).get("path")
+        if isinstance(r, dict) and (r.get("processed") or {}).get("path")
     ]
     total_pairs = len(records_with_processed)
 
@@ -405,8 +662,11 @@ def _verify_mapping_frames(
 def _verify_pipeline_artifacts(
     report: dict,
     output: Path,
+    passport: dict,
     verifier: Verification,
 ) -> None:
+    _verify_source_manifest(report, output, passport, verifier)
+
     sequence = report.get("sequence") or {}
     if not isinstance(sequence, dict):
         verifier.fail("Report has invalid sequence section")
@@ -608,6 +868,10 @@ def verify_output(
 
         report = read_json(report_path)
 
+        if not isinstance(report, dict):
+            verifier.fail("Processing report must be a JSON object")
+            report = {}
+
         passport = _read_fits_passport(output, verifier)
 
         if trusted_key:
@@ -633,6 +897,9 @@ def verify_output(
             verifier.fail("Report is not for the post-stack stage")
         else:
             verifier.ok("Report type and stage verified")
+
+            if isinstance(schema, str):
+                _verify_passport_schema(passport, schema, verifier)
 
             if not is_standalone:
                 report_prov_id = report.get("passport_id")
@@ -683,10 +950,23 @@ def verify_output(
             verifier.fail("Report is missing the output FITS SHA-256")
 
         if not (is_standalone or is_collection):
-            _verify_pipeline_artifacts(report, output, verifier)
-            
-        if is_collection and raw_dir_arg:
-            _verify_source_data(report, Path(raw_dir_arg).resolve(), verifier)
+            _verify_pipeline_artifacts(report, output, passport, verifier)
+
+        if is_collection:
+            _verify_collection_cross_check(report, verifier)
+
+        if raw_dir_arg:
+            _verify_source_data(
+                report,
+                Path(raw_dir_arg).resolve(),
+                output,
+                verifier,
+            )
+        elif not is_standalone:
+            print(
+                "\n  [WARN] Raw sources not provided. "
+                "Self-contained verification only."
+            )
 
         if report.get("warnings"):
             print("\n  [WARN] Processing report has warnings:")
@@ -717,7 +997,7 @@ def verify_output(
         )
         return 0
 
-    except (OSError, ValueError, TypeError, KeyError) as exc:
+    except (OSError, ValueError, TypeError, KeyError, AttributeError, IndexError) as exc:
         print(f"\n  [FAIL] Error reading or verifying data: {exc}")
         return 1
 

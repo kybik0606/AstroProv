@@ -270,10 +270,13 @@ def run_pipeline(
 
         # Create prov_data dict first, WITHOUT the signature
         prov_data = {
-            "version": "1.1",
+            "version": "1.2",
             "id": passport_id,
             "schema": SCHEMA_PROCESSING,
             "merkle_root": merkle_root,
+            "merkle_algorithm": (
+                manifest_data.get("merkle_algorithm") or snapshot.MERKLE_V2
+            ),
             "date": proc_report["created_utc"],
             "tool": "AstroProv",
             "lights_count": stats["lights_count"],

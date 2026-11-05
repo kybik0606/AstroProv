@@ -25,6 +25,7 @@ from pathlib import Path
 import pytest
 from astropy.io import fits
 
+from astroprov import processing, snapshot
 from astroprov.cli import pipeline
 
 
@@ -94,6 +95,45 @@ def test_safe_exptime_invalid_string(tmp_path):
 
 def test_safe_exptime_missing_file(tmp_path):
     assert pipeline._safe_exptime(tmp_path / "nonexistent.fits") == 0.0
+
+
+# ----------------------------------------------------- inspect_output_fits ---
+
+def test_inspect_output_fits_tolerates_invalid_exptime(tmp_path):
+    hdu = fits.PrimaryHDU(data=[[1.0, 2.0], [3.0, 4.0]])
+    hdu.header["EXPTIME"] = "unknown"
+    path = tmp_path / "a.fits"
+    hdu.writeto(path)
+
+    info = processing.inspect_output_fits(path)
+
+    assert info["exptime"] == 0.0
+    assert info["shape"] == [2, 2]
+
+
+# ------------------------------------------------------------- merkle v2 ---
+
+def _leaf(path_value: str, digest: str) -> dict:
+    return {"path": path_value, "sha256": digest}
+
+
+def test_merkle_collision_v2():
+    """Duplicating the last leaf must change the v2 root."""
+    base = [
+        _leaf("a", "a" * 64),
+        _leaf("b", "b" * 64),
+        _leaf("c", "c" * 64),
+    ]
+    duplicated = base + [_leaf("c", "c" * 64)]
+
+    # v1 is vulnerable to this second-preimage collision.
+    assert snapshot.merkle_root(base) == snapshot.merkle_root(duplicated)
+
+    # v2 mixes the leaf count into the root, so the roots differ.
+    assert snapshot.merkle_root_v2(base) != snapshot.merkle_root_v2(duplicated)
+
+    # The empty root must also differ from a one-leaf root.
+    assert snapshot.merkle_root_v2([]) != snapshot.merkle_root_v2(base[:1])
 
 
 # --------------------------------------------------------- _find_sequence ---
