@@ -94,17 +94,20 @@ class Verification:
 
 def _read_fits_passport(output: Path, verifier: Verification) -> dict:
     passport: dict = {
+        "version": None,
         "id": None,
         "report_hash": None,
         "signature": None,
         "pubkey_fp": None,
         "merkle_root": None,
+        "date": None,
+        "tool": None,
+        "schema": None,
         "lights": None,
         "darks": None,
         "biases": None,
         "flats": None,
         "exptime": None,
-        "schema": None,
     }
 
     try:
@@ -116,11 +119,14 @@ def _read_fits_passport(output: Path, verifier: Verification) -> dict:
                 return passport
 
             hdr = hdul["PROVENANCE"].header
+            passport["version"] = hdr.get("PROVVER")
             passport["id"] = hdr.get("PROVID")
             passport["schema"] = hdr.get("PROVTYPE")
             passport["report_hash"] = hdr.get("PROVHASH")
             passport["pubkey_fp"] = hdr.get("PROVPUBK")
             passport["merkle_root"] = hdr.get("PROVMRKL")
+            passport["date"] = hdr.get("PROVDATE")
+            passport["tool"] = hdr.get("PROVTOOL")
             passport["lights"] = hdr.get("PROVLIT")
             passport["darks"] = hdr.get("PROVDRK")
             passport["biases"] = hdr.get("PROVBIA")
@@ -142,7 +148,7 @@ def _read_fits_passport(output: Path, verifier: Verification) -> dict:
 def _find_report(output: Path) -> Path:
     matches: list[Path] = []
     
-    # Ищем отчеты в корне проекта (M101/.astroprov) и рядом с файлом (M101/process/.astroprov)
+    # Search for reports in the project root (.astroprov) and next to the file (process/.astroprov)
     for root in (output.parent.parent, output.parent):
         runs_dir = root / ".astroprov" / "runs"
         if not runs_dir.is_dir():
@@ -160,7 +166,7 @@ def _find_report(output: Path) -> Path:
     if not matches:
         raise FileNotFoundError(f"No processing report found for {output}")
 
-    # Возвращаем САМЫЙ СВЕЖИЙ отчет (по времени изменения файла)
+    # Return the NEWEST report (by file modification time)
     return max(matches, key=lambda p: p.stat().st_mtime)
 
 
@@ -192,22 +198,44 @@ def _verify_signature(
     if not keys_dir.is_dir():
         keys_dir = output.parent.parent / ".astroprov" / "keys"
 
-    sig_payload = {
-        "report_hash": fits_report_hash,
-        "id": passport["id"],
-        "merkle_root": passport["merkle_root"],
-        "lights_count": passport["lights"],
-        "darks_count": passport["darks"],
-        "biases_count": passport["biases"],
-        "flats_count": passport["flats"],
-        "exptime": passport["exptime"],
-    }
-    sig_bytes = json.dumps(
-        sig_payload,
-        sort_keys=True,
-        separators=(",", ":"),
-        ensure_ascii=False,
-    ).encode("utf-8")
+    version = passport.get("version")
+
+    if version == "1.1":
+        # NEW VERSION: Reconstruct the full passport dict for canonical_payload
+        canonical_dict = {
+            "version": passport["version"],
+            "id": passport["id"],
+            "merkle_root": passport["merkle_root"],
+            "date": passport["date"],
+            "tool": passport["tool"],
+            "schema": passport["schema"],
+            "lights_count": passport["lights"],
+            "darks_count": passport["darks"],
+            "biases_count": passport["biases"],
+            "flats_count": passport["flats"],
+            "exptime": passport["exptime"],
+            "pubkey_fingerprint": passport["pubkey_fp"],
+            "report_hash": passport["report_hash"],
+        }
+        sig_bytes = signature.canonical_payload(canonical_dict)
+    else:
+        # OLD VERSION (1.0): Backward compatibility for legacy files
+        sig_payload = {
+            "report_hash": fits_report_hash,
+            "id": passport["id"],
+            "merkle_root": passport["merkle_root"],
+            "lights_count": passport["lights"],
+            "darks_count": passport["darks"],
+            "biases_count": passport["biases"],
+            "flats_count": passport["flats"],
+            "exptime": passport["exptime"],
+        }
+        sig_bytes = json.dumps(
+            sig_payload,
+            sort_keys=True,
+            separators=(",", ":"),
+            ensure_ascii=False,
+        ).encode("utf-8")
 
     if signature.verify_signature(sig_bytes, fits_sig, keys_dir):
         verifier.ok(
