@@ -165,27 +165,9 @@ def seal_fits(
     except Exception as exc:
         print(f"  [WARN] Timestamping failed: {exc}")
 
-    # 7. Build canonical payload and sign
-    sig_payload = {
-        "report_hash": report_hash,
-        "id": passport_id,
-        "merkle_root": data_hash,
-        "lights_count": lights_cnt,
-        "darks_count": darks_cnt,
-        "biases_count": biases_cnt,
-        "flats_count": flats_cnt,
-        "exptime": exptime,
-    }
-    sig_bytes = json.dumps(
-        sig_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-    ).encode("utf-8")
-    
-    sig_hex = signature.sign_data(sig_bytes, keys_dir)
-    print("  [*] Signing report payload...")
-
-    # 8. Embed passport
+    # 7. Create prov_data dict first, WITHOUT the signature
     prov_data = {
-        "version": "1.0",
+        "version": "1.1",
         "id": passport_id,
         "merkle_root": data_hash,
         "date": created_utc,
@@ -198,8 +180,15 @@ def seal_fits(
         "exptime": exptime,
         "pubkey_fingerprint": pubkey_fp,
         "report_hash": report_hash,
-        "signature": sig_hex
     }
+
+    # Generate canonical payload and sign
+    sig_bytes = signature.canonical_payload(prov_data)
+    sig_hex = signature.sign_data(sig_bytes, keys_dir)
+    print("  [*] Signing report payload...")
+
+    # Add signature to the dict and write to FITS
+    prov_data["signature"] = sig_hex
     
     fits_prov.write_provenance(fits_path, prov_data)
     print("  [OK] Passport embedded successfully.")

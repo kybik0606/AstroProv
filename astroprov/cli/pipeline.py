@@ -268,23 +268,9 @@ def run_pipeline(
         except Exception as exc:
             print(f"  [WARN] Timestamping failed: {exc}")
 
-        sig_payload = {
-            "report_hash": report_hash,
-            "id": passport_id,
-            "merkle_root": merkle_root,
-            "lights_count": int(stats["lights_count"]),
-            "darks_count": int(stats["darks_count"]),
-            "biases_count": int(stats["biases_count"]),
-            "flats_count": int(stats["flats_count"]),
-            "exptime": float(exptime),
-        }
-        sig_bytes = json.dumps(
-            sig_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
-        ).encode("utf-8")
-        sig_hex = signature.sign_data(sig_bytes, keys_dir)
-
+        # Create prov_data dict first, WITHOUT the signature
         prov_data = {
-            "version": "1.0",
+            "version": "1.1",
             "id": passport_id,
             "schema": SCHEMA_PROCESSING,
             "merkle_root": merkle_root,
@@ -297,8 +283,14 @@ def run_pipeline(
             "exptime": exptime,
             "pubkey_fingerprint": pubkey_fp,
             "report_hash": report_hash,
-            "signature": sig_hex,
         }
+
+        # Generate canonical payload and sign
+        sig_bytes = signature.canonical_payload(prov_data)
+        sig_hex = signature.sign_data(sig_bytes, keys_dir)
+
+        # Add signature to the dict and write to FITS
+        prov_data["signature"] = sig_hex
 
         fits_prov.write_provenance(output_fits, prov_data)
         print("  [*] Signing post-stack report...")
