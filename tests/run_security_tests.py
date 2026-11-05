@@ -50,6 +50,8 @@ TAMPER_TARGETS = [
     # Phase 2 additions: these fields are now part of the canonical payload
     ("PROVDATE", "date", "1970-01-01T00:00:00+00:00"),
     ("PROVTYPE", "schema", "astroprov-fake-v9"),
+    # Key substitution: the recorded fingerprint must match the verifying key
+    ("PROVPUBK", "pubkey_fingerprint", "0" * 16),
 ]
 
 
@@ -111,9 +113,14 @@ def test_field(fits_path: Path, key: str, value, verbose: bool = False) -> tuple
         if is_pass:
             return False, "tampered file passed verification (vulnerability!)"
 
-        # Check that FAIL was due to signature/ID mismatch, not a random crash
-        if "Digital signature is INVALID" not in output and "Passport ID mismatch" not in output:
-            return False, "verify failed, but not on signature/ID check"
+        # Check that FAIL was due to a security check, not a random crash
+        expected_markers = (
+            "Digital signature is INVALID",
+            "Passport ID mismatch",
+            "Passport fingerprint does not match",
+        )
+        if not any(marker in output for marker in expected_markers):
+            return False, "verify failed, but not on signature/ID/fingerprint check"
 
         # 3. Restore
         shutil.copy2(backup, fits_path)

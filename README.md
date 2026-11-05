@@ -1,4 +1,4 @@
-![Version](https://img.shields.io/badge/version-v1.4.3-blue)
+![Version](https://img.shields.io/badge/version-v1.4.4-blue)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
@@ -230,6 +230,12 @@ Checks the FITS file itself and its signature. Use this if you only have the fin
 python -m astroprov.verify "test_data/_demo_seal.fit"
 ```
 
+To pin verification to a specific public key (recommended when receiving files from someone else), pass its fingerprint:
+
+```bash
+python -m astroprov.verify "image.fit" --trusted-key 748201ad33df4602
+```
+
 Expected Output:
 
 ```text
@@ -411,7 +417,7 @@ In version 1.3.0, the codebase underwent a comprehensive security and architectu
 *   **Safe FITS Parsing:** Introduced `safe_int` and `safe_float` helpers in `utils.py`. Malformed or malicious FITS headers (e.g., `EXPTIME = "unknown"`) will no longer crash the application; they are handled gracefully.
 *   **Strict Error Handling:** Removed broad `except Exception` blocks across the codebase. Specific exceptions (`OSError`, `ValueError`, `RuntimeError`) are now caught and propagated correctly.
 *   **Private Key Protection:** The private Ed25519 key is explicitly restricted to `chmod 600` (owner read/write only) upon generation on Unix-like systems.
-*   **Tamper-Test Verified:** A dedicated test suite (`tests/run_security_tests.py`) asserts that tampering with any of the **9 passport header fields** (including date and schema) instantly triggers a `FAIL` verdict.
+*   **Tamper-Test Verified:** A dedicated test suite (`tests/run_security_tests.py`) asserts that tampering with any of the **10 passport header fields** (including date, schema, and public-key fingerprint) instantly triggers a `FAIL` verdict.
 
 In version 1.4.0, we added trusted third-party verification:
 
@@ -421,6 +427,12 @@ In version 1.4.3, we hardened the passport signature:
 
 *   **Cryptographic Binding of All Fields (v1.1 Schema):** The signature now covers **ALL** passport fields (including `date`, `tool`, and `schema`) using a canonical payload. This prevents backdating attacks (modifying `PROVDATE`) and schema spoofing.
 *   **Key Generation Hardening:** Private keys are now written to disk atomically using secure temporary files (`os.replace`), preventing partial writes. The system also automatically recovers a missing public key from the private key.
+
+In version 1.4.4, we hardened key trust:
+
+*   **Key Substitution Protection:** `verify` now recomputes the actual public-key fingerprint and compares it with `PROVPUBK` from the FITS passport. Replacing `.astroprov/keys/public_key.pem` with an attacker-controlled key now triggers a `FAIL`.
+*   **Trust Anchor (`--trusted-key`):** Pass `--trusted-key <fingerprint>` to pin verification to a known key. Added fingerprint verification and `--trusted-key` support. Non-repudiation is now cryptographically enforced.
+*   **Stable Fingerprints:** Fingerprints are computed from the DER-encoded public key (`SubjectPublicKeyInfo`), so they are independent of PEM formatting. Passports created by older versions remain verifiable through a legacy fingerprint fallback.
 
 ## Copyright
 

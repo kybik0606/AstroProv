@@ -118,7 +118,34 @@ def generate_keys(keys_dir: Path | str) -> None:
 
 
 def get_public_key_fingerprint(keys_dir: Path | str) -> str:
-    """Returns a short SHA-256 fingerprint of the public key."""
+    """Returns a short SHA-256 fingerprint of the public key.
+
+    The hash is computed over the DER SubjectPublicKeyInfo encoding, so the
+    result is independent of the PEM text formatting (line endings, headers,
+    etc.).
+    """
+    keys_dir = Path(keys_dir).resolve()
+    pub_path = keys_dir / "public_key.pem"
+
+    if not pub_path.exists():
+        return "NO_KEY"
+
+    with open(pub_path, "rb") as f:
+        public_key = serialization.load_pem_public_key(f.read())
+
+    der_bytes = public_key.public_bytes(
+        encoding=serialization.Encoding.DER,
+        format=serialization.PublicFormat.SubjectPublicKeyInfo,
+    )
+    return hashlib.sha256(der_bytes).hexdigest()[:16]
+
+
+def get_legacy_public_key_fingerprint(keys_dir: Path | str) -> str:
+    """Returns the pre-1.4.4 fingerprint (SHA-256 of raw PEM bytes).
+
+    Kept for verifying passports created by older AstroProv versions. New
+    passports always use the DER-based fingerprint.
+    """
     keys_dir = Path(keys_dir).resolve()
     pub_path = keys_dir / "public_key.pem"
     

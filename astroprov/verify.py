@@ -198,6 +198,25 @@ def _verify_signature(
     if not keys_dir.is_dir():
         keys_dir = output.parent.parent / ".astroprov" / "keys"
 
+    actual_fp = signature.get_public_key_fingerprint(keys_dir)
+    legacy_fp = signature.get_legacy_public_key_fingerprint(keys_dir)
+    passport_fp = str(passport.get("pubkey_fp") or "").strip().lower()
+
+    if not passport_fp:
+        verifier.fail(
+            "Passport is missing the public key fingerprint (PROVPUBK)."
+        )
+        return
+
+    # Accept the legacy PEM-based fingerprint only so passports created
+    # before v1.4.4 remain verifiable. New passports use the DER fingerprint.
+    if passport_fp not in {actual_fp.lower(), legacy_fp.lower()}:
+        verifier.fail(
+            "Passport fingerprint does not match the actual public key "
+            "used to verify!"
+        )
+        return
+
     version = passport.get("version")
 
     if version == "1.1":
@@ -564,8 +583,13 @@ def verify_output(
     output_arg: str | Path,
     report_arg: str | Path | None = None,
     raw_dir_arg: str | Path | None = None,
+    trusted_key: str | None = None,
 ) -> int:
-    """Verify the full provenance chain for a stacked output FITS."""
+    """Verify the full provenance chain for a stacked output FITS.
+
+    If ``trusted_key`` is provided, the passport fingerprint must match it.
+    This pins verification to a known public key (trust anchor).
+    """
     verifier = Verification()
     output = Path(output_arg).resolve()
 
@@ -585,6 +609,15 @@ def verify_output(
         report = read_json(report_path)
 
         passport = _read_fits_passport(output, verifier)
+
+        if trusted_key:
+            trusted_fp = str(trusted_key).strip().lower()
+            passport_fp = str(passport.get("pubkey_fp") or "").strip().lower()
+
+            if passport_fp != trusted_fp:
+                verifier.fail("The key fingerprint is not trusted!")
+            else:
+                verifier.ok(f"Passport fingerprint is trusted ({passport_fp})")
 
         schema = report.get("schema")
         is_standalone = schema == "astroprov-standalone-v1"
@@ -704,8 +737,17 @@ def main() -> int:
         "--raw-dir",
         help="Optional path to raw source folder for deep verification",
     )
+    parser.add_argument(
+        "--trusted-key",
+        help="Expected passport key fingerprint (16 hex chars) to pin",
+    )
     args = parser.parse_args()
-    return verify_output(args.output_fits, args.report, args.raw_dir)
+    return verify_output(
+        args.output_fits,
+        args.report,
+        args.raw_dir,
+        trusted_key=args.trusted_key,
+    )
 
 
 if __name__ == "__main__":

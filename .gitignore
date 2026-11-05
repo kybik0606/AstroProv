@@ -30,3 +30,6 @@ build/
 # Allow public FreeTSA certificates
 !astroprov/certs/cacert.pem
 !astroprov/certs/tsa.crt
+
+# Agents
+AGENTS.md
