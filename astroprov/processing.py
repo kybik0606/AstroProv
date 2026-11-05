@@ -347,6 +347,36 @@ def validate_frame_mapping(
     }
 
 
+def _read_manifest(manifest_path: Path | None) -> dict | None:
+    """Read a manifest JSON file, returning None when unavailable."""
+    if manifest_path is None or not manifest_path.is_file():
+        return None
+
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        print(f"  [WARN] Could not read manifest: {exc}")
+        return None
+
+    return data if isinstance(data, dict) else None
+
+
+def _manifest_summary(manifest: dict) -> tuple[dict, str | None]:
+    """Return category roots and the Merkle algorithm from a manifest."""
+    categories = manifest.get("categories")
+    source_data = {}
+
+    if isinstance(categories, dict):
+        for name, category in categories.items():
+            if isinstance(category, dict):
+                source_data[name] = {
+                    "file_count": category.get("file_count", 0),
+                    "merkle_root": category.get("merkle_root"),
+                }
+
+    return source_data, manifest.get("merkle_algorithm")
+
+
 def optional_file_record(path: Path | None) -> dict | None:
     """Return a hash record for an optional existing file."""
     if path is None:
@@ -390,6 +420,8 @@ def build_pre_stack_report(
 
     warnings = []
 
+    manifest_data = _read_manifest(manifest_path)
+
     if not mapping_validation["consistent"]:
         warnings.append(
             "Frame mapping validation failed. "
@@ -414,6 +446,9 @@ def build_pre_stack_report(
         "mapping_file": optional_file_record(mapping_path),
         "mapping_validation": mapping_validation,
         "source_manifest": optional_file_record(manifest_path),
+        "merkle_algorithm": (
+            manifest_data.get("merkle_algorithm") if manifest_data else None
+        ),
         "planned_stack_command": stack_command,
         "status": (
             "ready"
@@ -634,14 +669,14 @@ def build_report(
     sequence = parse_sequence(sequence_path)
     fits_info = inspect_output_fits(output_path)
 
-    # Get passport_id from the manifest
-    passport_id = None
-    if manifest_path and manifest_path.is_file():
-        try:
-            manifest_data = json.loads(manifest_path.read_text(encoding="utf-8"))
-            passport_id = manifest_data.get("passport_id")
-        except (OSError, json.JSONDecodeError) as exc:
-            print(f"  [WARN] Could not read passport_id from manifest: {exc}")
+    # Get passport_id and source category roots from the manifest
+    manifest_data = _read_manifest(manifest_path)
+    passport_id = manifest_data.get("passport_id") if manifest_data else None
+
+    source_data: dict = {}
+    merkle_algorithm = None
+    if manifest_data is not None:
+        source_data, merkle_algorithm = _manifest_summary(manifest_data)
 
     recorded_count = fits_info["stack_count"]
     count_source = "STACKCNT"
@@ -689,6 +724,7 @@ def build_report(
         "stage": "post-stack",
         "created_utc": utc_timestamp(),
         "passport_id": passport_id,
+        "merkle_algorithm": merkle_algorithm,
         "sequence": {
             "path": str(sequence_path),
             "sha256": sha256_file(sequence_path),
@@ -720,6 +756,7 @@ def build_report(
         "mapping_file": optional_file_record(mapping_path),
         "mapping_validation": mapping_validation,
         "source_manifest": optional_file_record(manifest_path),
+        "source_data": source_data or None,
         "pre_stack_report": pre_stack_link,
         "stack_command": stack_command,
         "warnings": warnings,

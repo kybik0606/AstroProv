@@ -41,6 +41,9 @@ def write_provenance(fits_path: Path | str, prov_data: dict) -> None:
         hdu.header["PROVID"] = (str(prov_data.get("id", "")), "")
         hdu.header["PROVTYPE"] = (str(prov_data.get("schema", "astroprov-standalone-v1")), "")
         hdu.header["PROVMRKL"] = (str(prov_data.get("merkle_root", "")), "")
+        merkle_algorithm = prov_data.get("merkle_algorithm")
+        if merkle_algorithm:
+            hdu.header["PROVMALG"] = (str(merkle_algorithm), "")
         hdu.header["PROVDATE"] = (str(prov_data.get("date", "")), "")
         hdu.header["PROVTOOL"] = (str(prov_data.get("tool", "AstroProv")), "")
         
@@ -89,8 +92,9 @@ def read_provenance(fits_path: Path | str) -> dict | None:
         return {
             "version": header.get("PROVVER"),
             "id": header.get("PROVID"),
-            "schema": header.get("PROVTYPE"), # Изменено здесь
+            "schema": header.get("PROVTYPE"),  # Schema recorded at seal time
             "merkle_root": header.get("PROVMRKL"),
+            "merkle_algorithm": header.get("PROVMALG"),
             "date": header.get("PROVDATE"),
             "tool": header.get("PROVTOOL"),
             "lights_count": header.get("PROVLIT"),

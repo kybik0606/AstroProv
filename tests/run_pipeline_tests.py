@@ -306,7 +306,37 @@ def main() -> int:
         stack_ok, stack_msg = _check_stack_command(object_dir, test)
         passport_ok, passport_msg = _check_passport(output_fits, test)
 
-        test_ok = pipeline_ok and frames_ok and stack_ok and passport_ok
+        # Deep verification: recompute the raw source Merkle roots.
+        deep_ok = False
+        deep_msg = "not tested"
+        if output_fits is not None:
+            verify_cmd = [
+                sys.executable, "-m", "astroprov.verify",
+                str(output_fits), "--raw-dir", str(object_dir),
+            ]
+            deep_result = subprocess.run(
+                verify_cmd,
+                cwd=PROJECT_ROOT,
+                capture_output=True,
+                text=True,
+            )
+            deep_output = deep_result.stdout + deep_result.stderr
+            if (
+                deep_result.returncode == 0
+                and "[OK] VERDICT: PASS" in deep_output
+            ):
+                deep_ok = True
+                deep_msg = "PASS (raw sources verified)"
+            else:
+                deep_msg = "FAIL"
+
+        test_ok = (
+            pipeline_ok
+            and frames_ok
+            and stack_ok
+            and passport_ok
+            and deep_ok
+        )
         results.append({
             "name": test["name"],
             "mode": test["mode"],
@@ -317,6 +347,7 @@ def main() -> int:
                 ("frames", frames_ok, frames_msg),
                 ("stack_command", stack_ok, stack_msg),
                 ("passport", passport_ok, passport_msg),
+                ("deep_verify", deep_ok, deep_msg),
             ],
         })
 
