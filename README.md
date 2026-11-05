@@ -1,4 +1,4 @@
-![Version](https://img.shields.io/badge/version-v1.4.4-blue)
+![Version](https://img.shields.io/badge/version-v1.5.0-blue)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
@@ -201,10 +201,11 @@ Expected Output:
 Reading passport from test_data/M101/process/r_pp_light__stacked.fit...
 
 Passport found:
-  version: 1.1
+  version: 1.2
   id: 33d5ddaf-a252-4f92-ad9c-92e4e17f0cd1
   schema: astroprov-standalone-v1
   merkle_root: 67facef9ec8fc924ef399659fc1744bbcfedced14111f83ef5d9e4474d2fcee9
+  merkle_algorithm: None
   date: 2026-10-31T16:22:48.916544+00:00
   tool: AstroProv
   lights_count: 38
@@ -354,7 +355,7 @@ Expected Output:
     - Passport ID:   33d5ddaf-a252-4f92-ad9c-92e4e17f0cd1
     - Created:       2026-10-31T16:22:48.916544+00:00
     - Tool:          AstroProv
-    - Format ver:    1.1
+    - Format ver:    1.2
 
   [*] Source Data Merkle Root:
     - SHA-256:       67facef9ec8fc924ef399659fc1744bbcfedced14111f83ef5d9e4474d2fcee9
@@ -433,6 +434,14 @@ In version 1.4.4, we hardened key trust:
 *   **Key Substitution Protection:** `verify` now recomputes the actual public-key fingerprint and compares it with `PROVPUBK` from the FITS passport. Replacing `.astroprov/keys/public_key.pem` with an attacker-controlled key now triggers a `FAIL`.
 *   **Trust Anchor (`--trusted-key`):** Pass `--trusted-key <fingerprint>` to pin verification to a known key. Added fingerprint verification and `--trusted-key` support. Non-repudiation is now cryptographically enforced.
 *   **Stable Fingerprints:** Fingerprints are computed from the DER-encoded public key (`SubjectPublicKeyInfo`), so they are independent of PEM formatting. Passports created by older versions remain verifiable through a legacy fingerprint fallback.
+
+In version 1.5.0, we closed the gap between signed and verified source data (passport schema v1.2):
+
+*   **Source Manifest Verification:** `verify` now reads `source_manifest` from the processing report, checks its SHA-256, and confirms that the manifest `passport_id` matches `PROVID` in the FITS passport.
+*   **Deep Raw Source Verification:** Passing `--raw-dir` to a pipeline artifact recomputes the Merkle roots for all recorded categories (`lights`, `darks`, `bias`/`biases`, `flats`) and fails on any mismatch. Without `--raw-dir`, verification prints `[WARN] Raw sources not provided. Self-contained verification only.`
+*   **Schema Consistency:** `PROVTYPE` in the FITS passport must match the JSON report schema. Legacy passports with the old pipeline default are still accepted.
+*   **Collection Cross-Check:** Collection reports now record `rejected_lights`, and verification requires `fits_lights + rejected_lights == raw_lights`. Legacy reports remain verifiable when frames were rejected.
+*   **Merkle v2 (`astroprov-merkle-v2`):** The leaf count is mixed into the root and odd nodes are promoted instead of duplicated, removing the `[a, b, c]` / `[a, b, c, c]` collision. Passports record the algorithm in `PROVMALG`, and v1 roots are still recomputed for files created before 1.5.0.
 
 ## Copyright
 

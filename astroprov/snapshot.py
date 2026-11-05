@@ -40,10 +40,30 @@ SOURCE_DIRS = (
     "offsets",
 )
 
+MERKLE_V1 = "astroprov-merkle-v1"
+MERKLE_V2 = "astroprov-merkle-v2"
+
+
+def _leaf_hash(item: dict) -> bytes:
+    """Return the domain-separated leaf hash for one file entry."""
+    leaf_data = {
+        "path": item["path"],
+        "sha256": item["sha256"],
+    }
+
+    encoded = json.dumps(
+        leaf_data,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+    return hashlib.sha256(b"\x00" + encoded).digest()
+
 
 def merkle_root(files: list[dict]) -> str:
     """
-    Builds the Merkle root from relative paths and file SHA-256 hashes.
+    Builds the legacy Merkle root (astroprov-merkle-v1).
 
     Format:
       leaf = SHA256(0x00 || canonical_json)
@@ -52,28 +72,14 @@ def merkle_root(files: list[dict]) -> str:
 
     If a level contains an odd number of nodes,
     the last node is duplicated.
+
+    This algorithm is retained only to verify manifests created before
+    astroprov-merkle-v2. New manifests must use ``merkle_root_v2``.
     """
     if not files:
         return hashlib.sha256(b"\x02").hexdigest()
 
-    leaves = []
-
-    for item in sorted(files, key=lambda x: x["path"]):
-        leaf_data = {
-            "path": item["path"],
-            "sha256": item["sha256"],
-        }
-
-        encoded = json.dumps(
-            leaf_data,
-            sort_keys=True,
-            separators=(",", ":"),
-            ensure_ascii=False,
-        ).encode("utf-8")
-
-        leaf_hash = hashlib.sha256(b"\x00" + encoded).digest()
-        leaves.append(leaf_hash)
-
+    leaves = [_leaf_hash(item) for item in sorted(files, key=lambda x: x["path"])]
     level = leaves
 
     while len(level) > 1:
@@ -93,6 +99,54 @@ def merkle_root(files: list[dict]) -> str:
     return level[0].hex()
 
 
+def merkle_root_v2(files: list[dict]) -> str:
+    """Builds a collision-resistant Merkle root (astroprov-merkle-v2).
+
+    Improvements over v1:
+
+    * the number of leaves is mixed into the final root, so adding or
+      removing a duplicate last leaf always changes the root;
+    * an odd node is promoted to the next level instead of being duplicated,
+      which removes the classic second-preimage weakness of v1.
+
+    Format:
+      leaf  = SHA256(0x00 || canonical_json)
+      node  = SHA256(0x01 || left || right)
+      empty = SHA256(0x02 || leaf_count)
+      root  = SHA256(0x03 || leaf_count || top_node)
+    """
+    leaf_count = len(files)
+
+    if leaf_count == 0:
+        return hashlib.sha256(
+            b"\x02" + leaf_count.to_bytes(8, "big")
+        ).hexdigest()
+
+    level = [
+        _leaf_hash(item) for item in sorted(files, key=lambda x: x["path"])
+    ]
+
+    while len(level) > 1:
+        next_level = []
+        pairs_end = len(level) - (len(level) % 2)
+
+        for index in range(0, pairs_end, 2):
+            parent = hashlib.sha256(
+                b"\x01" + level[index] + level[index + 1]
+            ).digest()
+            next_level.append(parent)
+
+        if pairs_end != len(level):
+            # Promote the unmatched node instead of duplicating it.
+            next_level.append(level[-1])
+
+        level = next_level
+
+    return hashlib.sha256(
+        b"\x03" + leaf_count.to_bytes(8, "big") + level[0]
+    ).hexdigest()
+
+
 def discover_source_dirs(object_dir: Path) -> list[Path]:
     """Finds known source frame directories."""
     found = []
@@ -106,8 +160,25 @@ def discover_source_dirs(object_dir: Path) -> list[Path]:
     return found
 
 
-def snapshot_directory(object_dir: Path) -> dict:
-    """Scans source directories and builds manifest data."""
+def _root_function(merkle_algorithm: str):
+    """Return the Merkle root builder for a supported algorithm name."""
+    if merkle_algorithm == MERKLE_V2:
+        return merkle_root_v2
+    if merkle_algorithm == MERKLE_V1:
+        return merkle_root
+    raise ValueError(f"Unsupported Merkle algorithm: {merkle_algorithm}")
+
+
+def snapshot_directory(
+    object_dir: Path,
+    merkle_algorithm: str = MERKLE_V2,
+) -> dict:
+    """Scans source directories and builds manifest data.
+
+    ``merkle_algorithm`` selects the hashing scheme. v1 is accepted so that
+    old reports and manifests can still be re-verified.
+    """
+    build_root = _root_function(merkle_algorithm)
     categories = {}
 
     for source_dir in discover_source_dirs(object_dir):
@@ -128,14 +199,14 @@ def snapshot_directory(object_dir: Path) -> dict:
         if total == 0:
             categories[category_name] = {
                 "file_count": 0,
-                "merkle_root": merkle_root([]),
+                "merkle_root": build_root([]),
                 "files": [],
             }
             continue
 
         pbar = tqdm(
             total=total,
-            bar_format="  {desc}", # <--- Отступ 2 пробела для прогресс-бара
+            bar_format="  {desc}",  # Two-space indent for the progress bar
             dynamic_ncols=True,
             disable=None,
         )
@@ -166,7 +237,7 @@ def snapshot_directory(object_dir: Path) -> dict:
 
         categories[category_name] = {
             "file_count": len(file_entries),
-            "merkle_root": merkle_root(file_entries),
+            "merkle_root": build_root(file_entries),
             "files": file_entries,
         }
 
@@ -208,7 +279,7 @@ def create_manifest(
         "object_name": object_dir.name,
         "created_utc": datetime.now(timezone.utc).isoformat(),
         "hash_algorithm": "SHA-256",
-        "merkle_algorithm": "astroprov-merkle-v1",
+        "merkle_algorithm": MERKLE_V2,
         "path_policy": "relative-to-object-directory",
         "categories": categories,
     }

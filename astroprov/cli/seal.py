@@ -117,11 +117,14 @@ def seal_fits(
     }
 
     merkle_root = data_hash
+    merkle_algorithm = None
 
     if raw_dir:
         passport_id = f"collection-{data_hash[:8]}"
         report_data["schema"] = "astroprov-collection-v1"
         report_data["proof_level"] = "claimed"
+        merkle_algorithm = snapshot.MERKLE_V2
+        report_data["merkle_algorithm"] = merkle_algorithm
 
         lights_category = categories.get("lights")
         if not lights_category:
@@ -139,7 +142,8 @@ def seal_fits(
 
         report_data["cross_check"] = {
             "fits_lights": lights_cnt,
-            "raw_lights": raw_lights
+            "raw_lights": raw_lights,
+            "rejected_lights": max(raw_lights - lights_cnt, 0),
         }
         report_data["source_data"] = {
             cat_name: {
@@ -177,9 +181,10 @@ def seal_fits(
 
     # 7. Create prov_data dict first, WITHOUT the signature
     prov_data = {
-        "version": "1.1",
+        "version": "1.2",
         "id": passport_id,
         "merkle_root": merkle_root,
+        "merkle_algorithm": merkle_algorithm,
         "date": created_utc,
         "tool": tool_name,
         "schema": schema_name,
