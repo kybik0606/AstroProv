@@ -1,4 +1,4 @@
-![Version](https://img.shields.io/badge/version-v1.4.2-blue)
+![Version](https://img.shields.io/badge/version-v1.4.3-blue)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
@@ -201,7 +201,7 @@ Expected Output:
 Reading passport from test_data/M101/process/r_pp_light__stacked.fit...
 
 Passport found:
-  version: 1.0
+  version: 1.1
   id: 33d5ddaf-a252-4f92-ad9c-92e4e17f0cd1
   schema: astroprov-standalone-v1
   merkle_root: 67facef9ec8fc924ef399659fc1744bbcfedced14111f83ef5d9e4474d2fcee9
@@ -348,7 +348,7 @@ Expected Output:
     - Passport ID:   33d5ddaf-a252-4f92-ad9c-92e4e17f0cd1
     - Created:       2026-10-31T16:22:48.916544+00:00
     - Tool:          AstroProv
-    - Format ver:    1.0
+    - Format ver:    1.1
 
   [*] Source Data Merkle Root:
     - SHA-256:       67facef9ec8fc924ef399659fc1744bbcfedced14111f83ef5d9e4474d2fcee9
@@ -411,11 +411,16 @@ In version 1.3.0, the codebase underwent a comprehensive security and architectu
 *   **Safe FITS Parsing:** Introduced `safe_int` and `safe_float` helpers in `utils.py`. Malformed or malicious FITS headers (e.g., `EXPTIME = "unknown"`) will no longer crash the application; they are handled gracefully.
 *   **Strict Error Handling:** Removed broad `except Exception` blocks across the codebase. Specific exceptions (`OSError`, `ValueError`, `RuntimeError`) are now caught and propagated correctly.
 *   **Private Key Protection:** The private Ed25519 key is explicitly restricted to `chmod 600` (owner read/write only) upon generation on Unix-like systems.
-*   **Tamper-Test Verified:** A dedicated test suite (`tests/run_security_tests.py`) asserts that tampering with any of the 7 passport header fields instantly triggers a `FAIL` verdict.
+*   **Tamper-Test Verified:** A dedicated test suite (`tests/run_security_tests.py`) asserts that tampering with any of the **9 passport header fields** (including date and schema) instantly triggers a `FAIL` verdict.
 
 In version 1.4.0, we added trusted third-party verification:
 
 *   **Trusted Third-Party (TTP):** Integrated RFC 3161 timestamps via [FreeTSA](https://freetsa.org/) to prevent timestamp spoofing and backdating attacks. Proof of existence is verified fully offline using X.509 certificates bundled directly into the repository.
+
+In version 1.4.3, we hardened the passport signature:
+
+*   **Cryptographic Binding of All Fields (v1.1 Schema):** The signature now covers **ALL** passport fields (including `date`, `tool`, and `schema`) using a canonical payload. This prevents backdating attacks (modifying `PROVDATE`) and schema spoofing.
+*   **Key Generation Hardening:** Private keys are now written to disk atomically using secure temporary files (`os.replace`), preventing partial writes. The system also automatically recovers a missing public key from the private key.
 
 ## Copyright
 
