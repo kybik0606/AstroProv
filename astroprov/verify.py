@@ -522,9 +522,15 @@ def _verify_source_data(
 
 def _verify_collection_cross_check(
     report: dict,
+    passport: dict,
     verifier: Verification,
 ) -> None:
-    """Verify that the FITS light count matches the raw lights count."""
+    """Verify the collection lights count against the signed passport.
+
+    The report is authenticated by its hash, so ``rejected_lights`` can no
+    longer be used as a loophole: the count recorded in ``cross_check`` must
+    match the ``PROVLIT`` value that is covered by the Ed25519 signature.
+    """
     cross = report.get("cross_check")
 
     if cross is None:
@@ -542,37 +548,99 @@ def _verify_collection_cross_check(
         verifier.fail("cross_check is missing integer lights counts")
         return
 
-    rejected_lights = cross.get("rejected_lights")
-
-    if rejected_lights is None:
-        # Legacy reports did not record rejected frames. A difference is
-        # expected when the stacking software dropped bad frames.
-        if fits_lights != raw_lights:
-            verifier.ok(
-                "Collection counts differ "
-                f"({fits_lights} used, {raw_lights} raw); "
-                "legacy report does not record rejected frames"
-            )
-        else:
-            verifier.ok(f"Collection lights count matches ({fits_lights})")
+    if fits_lights < 0 or raw_lights < 0:
+        verifier.fail("cross_check contains negative lights counts")
         return
 
-    if not isinstance(rejected_lights, int) or rejected_lights < 0:
-        verifier.fail("cross_check has an invalid rejected_lights value")
+    passport_lights = passport.get("lights")
+
+    if not isinstance(passport_lights, int):
+        verifier.fail("Passport is missing the PROVLIT lights count")
         return
 
-    if fits_lights + rejected_lights != raw_lights:
+    if fits_lights != passport_lights:
         verifier.fail(
-            f"cross_check lights mismatch! FITS: {fits_lights}, "
-            f"raw: {raw_lights}, rejected: {rejected_lights}"
-        )
-    elif rejected_lights:
-        verifier.ok(
-            f"Collection lights count matches ({fits_lights} used, "
-            f"{rejected_lights} rejected)"
+            f"cross_check lights mismatch! "
+            f"FITS PROVLIT: {passport_lights}, "
+            f"report fits_lights: {fits_lights}"
         )
     else:
-        verifier.ok(f"Collection lights count matches ({fits_lights})")
+        verifier.ok(
+            f"cross_check lights count matches PROVLIT ({passport_lights})"
+        )
+
+
+def _verify_passport_merkle_root(
+    report: dict,
+    passport: dict,
+    verifier: Verification,
+) -> None:
+    """Verify that PROVMRKL matches the lights root from the report."""
+    source_data = report.get("source_data")
+
+    if not isinstance(source_data, dict) or not source_data:
+        verifier.ok(
+            "Passport Merkle root is not cross-checked "
+            "(report has no source_data)"
+        )
+        return
+
+    lights = source_data.get("lights")
+
+    if not isinstance(lights, dict):
+        verifier.fail("Report source_data has no lights category")
+        return
+
+    expected_root = lights.get("merkle_root")
+    passport_root = passport.get("merkle_root")
+
+    if not isinstance(expected_root, str) or not expected_root:
+        verifier.fail("Report source_data lights has no Merkle root")
+        return
+
+    if passport_root != expected_root:
+        verifier.fail(
+            f"Passport Merkle root mismatch! "
+            f"FITS: {passport_root}, report: {expected_root}"
+        )
+    else:
+        verifier.ok("Passport Merkle root matches the report source_data")
+
+
+def _verify_passport_id(
+    report: dict,
+    passport: dict,
+    is_collection: bool,
+    is_standalone: bool,
+    verifier: Verification,
+) -> None:
+    """Verify that PROVID matches the report passport_id when available."""
+    if is_standalone:
+        verifier.ok("Standalone passport verified")
+        return
+
+    report_prov_id = report.get("passport_id")
+
+    if not report_prov_id:
+        if is_collection:
+            # Legacy collection reports did not record passport_id.
+            verifier.ok(
+                "Passport ID verification skipped for collection schema "
+                "(report has no passport_id)"
+            )
+        else:
+            verifier.fail(
+                "JSON report is missing passport_id for comparison."
+            )
+        return
+
+    if passport.get("id") != report_prov_id:
+        verifier.fail(
+            f"Passport ID mismatch! FITS: {passport.get('id')}, "
+            f"JSON: {report_prov_id}"
+        )
+    else:
+        verifier.ok("Passport ID in FITS matches ID in JSON report")
 
 
 def _verify_mapping_frames(
@@ -901,23 +969,13 @@ def verify_output(
             if isinstance(schema, str):
                 _verify_passport_schema(passport, schema, verifier)
 
-            if not is_standalone:
-                report_prov_id = report.get("passport_id")
-                if not report_prov_id and not is_collection:
-                    verifier.fail(
-                        "JSON report is missing passport_id for comparison."
-                    )
-                elif not is_collection and passport["id"] != report_prov_id:
-                    verifier.fail(
-                        f"Passport ID mismatch! FITS: {passport['id']}, "
-                        f"JSON: {report_prov_id}"
-                    )
-                else:
-                    verifier.ok(
-                        "Passport ID in FITS matches ID in JSON report"
-                    )
-            else:
-                verifier.ok("Standalone passport verified")
+            _verify_passport_id(
+                report,
+                passport,
+                is_collection,
+                is_standalone,
+                verifier,
+            )
 
         _verify_signature(output, report_path, passport, verifier)
         
@@ -952,8 +1010,11 @@ def verify_output(
         if not (is_standalone or is_collection):
             _verify_pipeline_artifacts(report, output, passport, verifier)
 
+        if not is_standalone:
+            _verify_passport_merkle_root(report, passport, verifier)
+
         if is_collection:
-            _verify_collection_cross_check(report, verifier)
+            _verify_collection_cross_check(report, passport, verifier)
 
         if raw_dir_arg:
             _verify_source_data(

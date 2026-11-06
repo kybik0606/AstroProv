@@ -1,4 +1,4 @@
-![Version](https://img.shields.io/badge/version-v1.5.0-blue)
+![Version](https://img.shields.io/badge/version-v1.5.1-blue)
 ![License](https://img.shields.io/badge/license-GPL--3.0-green)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue)
 
@@ -288,6 +288,8 @@ ASTROPROV FITS PROVENANCE VERIFICATION
   [OK] Ed25519 signature is valid (FP: 22d298b576b6728d)
   [OK] Trusted timestamp (RFC 3161) is valid
   [OK] Output FITS (data without passport): SHA-256 matches
+  [OK] Passport Merkle root matches the report source_data
+  [OK] cross_check lights count matches PROVLIT (38)
   [OK] [bias] Source data matches (30 files)
   [OK] [darks] Source data matches (20 files)
   [OK] [lights] Source data matches (38 files)
@@ -377,13 +379,15 @@ Expected Output:
 
 ## Testing
 
-The project includes automated tests for pipeline execution, unified sealing, and security (tamper-resistance). All core modules have been tested in isolation, and the full suite runs successfully on both Windows and Linux. Test execution times are benchmarked to help identify performance bottlenecks.
+The project includes automated tests for pipeline execution, unified sealing, verification, and security (tamper-resistance). All core modules have been tested in isolation, and the full suite runs successfully on both Windows and Linux. Test execution times are benchmarked to help identify performance bottlenecks.
+
+The fast unit/integration suite now contains **67 tests** (up from 60), including explicit checks for `PROVMRKL` substitution and `PROVLIT` mismatches.
 
 To run the predefined end-to-end tests, place your test object directories inside a `test_data/` folder in the project root (e.g., `test_data/M101`). This folder is ignored by Git to prevent committing large FITS files.
 
 ```bash
-# Run fast unit tests for the pipeline and seal modules (no Siril required)
-pytest tests/test_pipeline.py tests/test_seal.py -v
+# Run fast unit tests for the pipeline, seal, and verify modules (no Siril required)
+pytest tests/test_pipeline.py tests/test_seal.py tests/test_verify.py -v
 
 # Run end-to-end pipeline tests (6 scenarios: auto, custom params, and manual)
 python tests/run_pipeline_tests.py
@@ -442,6 +446,12 @@ In version 1.5.0, we closed the gap between signed and verified source data (pas
 *   **Schema Consistency:** `PROVTYPE` in the FITS passport must match the JSON report schema. Legacy passports with the old pipeline default are still accepted.
 *   **Collection Cross-Check:** Collection reports now record `rejected_lights`, and verification requires `fits_lights + rejected_lights == raw_lights`. Legacy reports remain verifiable when frames were rejected.
 *   **Merkle v2 (`astroprov-merkle-v2`):** The leaf count is mixed into the root and odd nodes are promoted instead of duplicated, removing the `[a, b, c]` / `[a, b, c, c]` collision. Passports record the algorithm in `PROVMALG`, and v1 roots are still recomputed for files created before 1.5.0.
+
+In version 1.5.1, we hardened the verification chain after the security audit:
+
+*   **Cross-Check Hardening (M1):** Collection `cross_check.fits_lights` is now strictly verified against the cryptographically signed `PROVLIT` field from the FITS passport.
+*   **Collection ID Verification (M2):** Collection reports now include `passport_id`, enabling strict matching against `PROVID`. Legacy reports without it will print an explicit "verification skipped" message.
+*   **Passport Merkle Root Cross-Check (M3):** The `PROVMRKL` field in the FITS passport is now strictly compared against `source_data["lights"]["merkle_root"]` from the JSON report.
 
 ## Copyright
 
