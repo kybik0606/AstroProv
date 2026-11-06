@@ -122,6 +122,7 @@ def seal_fits(
     if raw_dir:
         passport_id = f"collection-{data_hash[:8]}"
         report_data["schema"] = "astroprov-collection-v1"
+        report_data["passport_id"] = passport_id
         report_data["proof_level"] = "claimed"
         merkle_algorithm = snapshot.MERKLE_V2
         report_data["merkle_algorithm"] = merkle_algorithm

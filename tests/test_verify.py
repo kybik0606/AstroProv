@@ -212,6 +212,107 @@ def _build_pipeline_artifact(root: Path) -> dict:
     }
 
 
+def _build_collection_artifact(
+    root: Path,
+    *,
+    passport_lights: int | None = None,
+    passport_merkle_root: str | None = None,
+    include_passport_id: bool = True,
+) -> dict:
+    """Create a minimal but fully consistent signed collection artifact."""
+    object_dir = root / "M31"
+    (object_dir / "lights").mkdir(parents=True)
+    (object_dir / "process").mkdir()
+
+    _write_fits(object_dir / "lights" / "light1.fit", EXPTIME=10.0)
+    output = _write_fits(
+        object_dir / "process" / "stacked.fit", EXPTIME=10.0, STACKCNT=1
+    )
+
+    manifest_path = snapshot.create_manifest(object_dir)
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    categories = manifest["categories"]
+    lights = categories["lights"]
+
+    data_hash = fits_prov.calculate_fits_data_hash(output)
+    collection_id = f"collection-{data_hash[:8]}"
+    recorded_lights = lights["file_count"]
+    report_lights_root = lights["merkle_root"]
+
+    source_data = {
+        name: {
+            "file_count": category.get("file_count", 0),
+            "merkle_root": category.get("merkle_root"),
+        }
+        for name, category in categories.items()
+    }
+
+    report = {
+        "created_utc": "2026-01-01T00:00:00+00:00",
+        "object_name": "M31",
+        "output_fits": {
+            "path": str(output),
+            "sha256": data_hash,
+        },
+        "schema": "astroprov-collection-v1",
+        "proof_level": "claimed",
+        "merkle_algorithm": manifest["merkle_algorithm"],
+        "cross_check": {
+            "fits_lights": recorded_lights,
+            "raw_lights": recorded_lights,
+            "rejected_lights": 0,
+        },
+        "source_data": source_data,
+    }
+
+    if include_passport_id:
+        report["passport_id"] = collection_id
+
+    report_path = (
+        object_dir
+        / ".astroprov"
+        / "runs"
+        / f"processing-{collection_id}.json"
+    )
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(report, indent=2) + "\n", encoding="utf-8"
+    )
+
+    keys_dir = object_dir / ".astroprov" / "keys"
+    signature.generate_keys(keys_dir)
+    pubkey_fp = signature.get_public_key_fingerprint(keys_dir)
+
+    prov_data = {
+        "version": "1.2",
+        "id": collection_id,
+        "merkle_root": passport_merkle_root or report_lights_root,
+        "merkle_algorithm": manifest["merkle_algorithm"],
+        "date": report["created_utc"],
+        "tool": "AstroProv-Universal",
+        "schema": "astroprov-collection-v1",
+        "lights_count": (
+            recorded_lights if passport_lights is None else passport_lights
+        ),
+        "darks_count": 0,
+        "biases_count": 0,
+        "flats_count": 0,
+        "exptime": 10.0,
+        "pubkey_fingerprint": pubkey_fp,
+        "report_hash": sha256_file(report_path),
+    }
+    prov_data["signature"] = signature.sign_data(
+        signature.canonical_payload(prov_data), keys_dir
+    )
+    fits_prov.write_provenance(output, prov_data)
+
+    return {
+        "object_dir": object_dir,
+        "output": output,
+        "report_path": report_path,
+    }
+
+
 # ------------------------------------------------------------------ tests ---
 
 def test_pipeline_artifact_verifies(tmp_path):
@@ -280,18 +381,98 @@ def test_passport_schema_mismatch_is_reported():
     assert verifier.errors
 
 
-def test_collection_cross_check_rejects_inconsistent_counts():
+def test_collection_cross_check_requires_provit_match():
     verifier = verify.Verification()
 
     verify._verify_collection_cross_check(
-        {
-            "cross_check": {
-                "fits_lights": 5,
-                "raw_lights": 6,
-                "rejected_lights": 0,
-            }
-        },
+        {"cross_check": {"fits_lights": 5, "raw_lights": 6}},
+        {"lights": 4},
         verifier,
     )
 
     assert verifier.errors
+    assert "PROVLIT" in verifier.errors[0]
+
+
+def test_collection_cross_check_accepts_matching_provit():
+    verifier = verify.Verification()
+
+    verify._verify_collection_cross_check(
+        {"cross_check": {"fits_lights": 5, "raw_lights": 6}},
+        {"lights": 5},
+        verifier,
+    )
+
+    assert not verifier.errors
+
+
+def test_passport_merkle_root_mismatch_is_reported():
+    verifier = verify.Verification()
+
+    verify._verify_passport_merkle_root(
+        {"source_data": {"lights": {"merkle_root": "a" * 64}}},
+        {"merkle_root": "b" * 64},
+        verifier,
+    )
+
+    assert verifier.errors
+    assert "Merkle root mismatch" in verifier.errors[0]
+
+
+def test_passport_id_skip_message_is_honest():
+    verifier = verify.Verification()
+
+    verify._verify_passport_id(
+        {}, {"id": "collection-deadbeef"}, True, False, verifier
+    )
+
+    assert not verifier.errors
+    assert any(
+        "skipped for collection schema" in message
+        for message in verifier.checks
+    )
+
+
+def test_collection_artifact_verifies(tmp_path):
+    artifact = _build_collection_artifact(tmp_path)
+
+    assert verify.verify_output(
+        str(artifact["output"]), str(artifact["report_path"])
+    ) == 0
+
+
+def test_collection_artifact_without_passport_id_reports_skip(
+    tmp_path, capsys
+):
+    artifact = _build_collection_artifact(
+        tmp_path, include_passport_id=False
+    )
+
+    assert verify.verify_output(
+        str(artifact["output"]), str(artifact["report_path"])
+    ) == 0
+    assert "Passport ID verification skipped for collection schema" in (
+        capsys.readouterr().out
+    )
+
+
+def test_collection_artifact_fails_when_provit_differs(tmp_path, capsys):
+    artifact = _build_collection_artifact(tmp_path, passport_lights=2)
+
+    assert verify.verify_output(
+        str(artifact["output"]), str(artifact["report_path"])
+    ) == 1
+    assert "cross_check lights mismatch" in capsys.readouterr().out
+
+
+def test_collection_artifact_fails_when_merkle_root_differs(
+    tmp_path, capsys
+):
+    artifact = _build_collection_artifact(
+        tmp_path, passport_merkle_root="0" * 64
+    )
+
+    assert verify.verify_output(
+        str(artifact["output"]), str(artifact["report_path"])
+    ) == 1
+    assert "Passport Merkle root mismatch" in capsys.readouterr().out

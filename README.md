@@ -440,7 +440,8 @@ In version 1.5.0, we closed the gap between signed and verified source data (pas
 *   **Source Manifest Verification:** `verify` now reads `source_manifest` from the processing report, checks its SHA-256, and confirms that the manifest `passport_id` matches `PROVID` in the FITS passport.
 *   **Deep Raw Source Verification:** Passing `--raw-dir` to a pipeline artifact recomputes the Merkle roots for all recorded categories (`lights`, `darks`, `bias`/`biases`, `flats`) and fails on any mismatch. Without `--raw-dir`, verification prints `[WARN] Raw sources not provided. Self-contained verification only.`
 *   **Schema Consistency:** `PROVTYPE` in the FITS passport must match the JSON report schema. Legacy passports with the old pipeline default are still accepted.
-*   **Collection Cross-Check:** Collection reports now record `rejected_lights`, and verification requires `fits_lights + rejected_lights == raw_lights`. Legacy reports remain verifiable when frames were rejected.
+*   **Collection Cross-Check:** Collection reports now record `passport_id`, and verification requires `cross_check.fits_lights` to match the signed `PROVLIT` value from the FITS passport. Legacy collection reports without `passport_id` print an explicit "verification skipped" message instead of a false success.
+*   **Passport Merkle Root Cross-Check:** `PROVMRKL` must match `source_data["lights"]["merkle_root"]` from the signed JSON report.
 *   **Merkle v2 (`astroprov-merkle-v2`):** The leaf count is mixed into the root and odd nodes are promoted instead of duplicated, removing the `[a, b, c]` / `[a, b, c, c]` collision. Passports record the algorithm in `PROVMALG`, and v1 roots are still recomputed for files created before 1.5.0.
 
 ## Copyright

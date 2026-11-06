@@ -182,6 +182,7 @@ def test_seal_collection_mode_embeds_source_data(tmp_path, monkeypatch, mocked_e
     report_data = json.loads(report_files[0].read_text())
     assert "source_data" in report_data
     assert report_data["source_data"]["lights"]["merkle_root"] == "1111111111111111"
+    assert report_data["passport_id"].startswith("collection-")
     assert report_data["cross_check"]["fits_lights"] == 10
     assert report_data["cross_check"]["raw_lights"] == 10
 
